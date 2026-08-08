@@ -55,3 +55,9 @@ jobs:
           TIQIAN_CHECKOUT: Tiqian
           MATH_COMPOSE_CHECKOUT: math-compose
         run: ./gradlew jvmTest compileAndroidMain
+
+      - name: Verify pure Maven consumption
+        env:
+          TIQIAN_CHECKOUT: Tiqian
+          MATH_COMPOSE_CHECKOUT: math-compose
+        run: ./scripts/verify-maven-local.sh
