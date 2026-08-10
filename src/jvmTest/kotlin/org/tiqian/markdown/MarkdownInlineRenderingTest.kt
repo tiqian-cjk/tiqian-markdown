@@ -20,11 +20,17 @@ import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.use
 import org.tiqian.compose.CjkText
+import org.tiqian.compose.CjkInlineBackgroundDrawStyle
+import org.tiqian.compose.CjkInlineBackgroundMetricPolicy
 import org.tiqian.core.LayoutResult
 import org.tiqian.core.getBoundingBoxes
 import kotlin.test.Test
@@ -157,10 +163,155 @@ class MarkdownInlineRenderingTest {
         }.use { scene -> scene.render(0L) }
 
         val lowered = assertNotNull(resolved)
-        assertTrue(!lowered.requiresComposeFallback)
         assertEquals(1, lowered.decorations.size)
         assertEquals(1, lowered.interactions.size)
         assertTrue(lowered.annotated.getLinkAnnotations(1, 3).single().item is LinkAnnotation.Clickable)
+    }
+
+    @Test
+    fun abbreviationUsesDottedTiqianDecorationWithoutDeadAnnotation() {
+        var resolved: ResolvedMarkdownText? = null
+        ImageComposeScene(width = 240, height = 72) {
+            resolved = resolveMarkdownText(
+                text = MarkdownText(
+                    value = "CLREQ",
+                    spans = listOf(
+                        MarkdownTextSpan(
+                            MarkdownTextRange(0, 5),
+                            MarkdownTextMark.Abbreviation("Requirements for Chinese Text Layout"),
+                        ),
+                    ),
+                ),
+                style = MarkdownStyle(),
+                textStyle = TextStyle(fontSize = 24.sp),
+                inlineSlots = DefaultMarkdownInlineSlots,
+                onLinkClick = null,
+                onFootnoteClick = null,
+            )
+        }.use { scene -> scene.render(0L) }
+
+        val lowered = assertNotNull(resolved)
+        assertTrue(lowered.annotated.getStringAnnotations(0, lowered.annotated.length).isEmpty())
+        assertTrue(lowered.decorations.single().decoration is MarkdownInlineDecoration.DottedUnderline)
+        assertTrue(
+            lowered.decorations.toCjkInlineDecorations().single().style is
+                org.tiqian.compose.CjkInlineDecorationStyle.DottedUnderline,
+        )
+    }
+
+    @Test
+    fun highlightUsesOneRoundedUniformTiqianBackground() {
+        var resolved: ResolvedMarkdownText? = null
+        val style = MarkdownStyle(
+            highlightVerticalPadding = 1.5.dp,
+            highlightCornerRadius = 3.dp,
+        )
+        ImageComposeScene(width = 240, height = 72) {
+            resolved = resolveMarkdownText(
+                text = MarkdownText(
+                    value = "中文 A B",
+                    spans = listOf(
+                        MarkdownTextSpan(MarkdownTextRange(0, 6), MarkdownTextMark.Highlight),
+                    ),
+                ),
+                style = style,
+                textStyle = TextStyle(fontSize = 24.sp),
+                inlineSlots = DefaultMarkdownInlineSlots,
+                onLinkClick = null,
+                onFootnoteClick = null,
+            )
+        }.use { scene -> scene.render(0L) }
+
+        val lowered = assertNotNull(resolved)
+        assertTrue(lowered.annotated.spanStyles.none { it.item.background != Color.Unspecified })
+        val background = lowered.backgrounds.single()
+        assertEquals(Color(0xFFFFE58F), background.color)
+        assertEquals(0.dp, background.horizontalPadding)
+        assertEquals(1.5.dp, background.verticalPadding)
+        assertEquals(3.dp, background.cornerRadius)
+        assertEquals(1.dp, background.adjacentSameStyleClearance)
+        assertEquals(CjkInlineBackgroundMetricPolicy.SpanTextStyle, background.metricPolicy)
+        assertEquals(
+            androidx.compose.ui.text.TextRange(0, 6),
+            lowered.backgrounds.toCjkInlineBackgrounds().single().range,
+        )
+    }
+
+    @Test
+    fun inlineCodeUsesCompactMonospaceAndAReservedRoundedBox() {
+        var resolved: ResolvedMarkdownText? = null
+        ImageComposeScene(width = 240, height = 72) {
+            resolved = resolveMarkdownText(
+                text = MarkdownText(
+                    value = "中code中",
+                    spans = listOf(
+                        MarkdownTextSpan(MarkdownTextRange(1, 5), MarkdownTextMark.InlineCode),
+                    ),
+                ),
+                style = MarkdownStyle(),
+                textStyle = TextStyle(fontSize = 24.sp),
+                inlineSlots = DefaultMarkdownInlineSlots,
+                onLinkClick = null,
+                onFootnoteClick = null,
+            )
+        }.use { scene -> scene.render(0L) }
+
+        val lowered = assertNotNull(resolved)
+        val codeStyle = lowered.annotated.spanStyles.single { it.start == 1 && it.end == 5 }.item
+        assertEquals(0.875.em, codeStyle.fontSize)
+        assertEquals(Color.Unspecified, codeStyle.background)
+        val background = lowered.backgrounds.single()
+        assertEquals(Color(0xFFF1F3F5), background.color)
+        assertEquals(4.dp, background.horizontalPadding)
+        assertEquals(3.dp, background.verticalPadding)
+        assertEquals(3.dp, background.cornerRadius)
+        assertEquals(1.dp, background.adjacentSameStyleClearance)
+        assertEquals(CjkInlineBackgroundMetricPolicy.ParagraphTextStyle, background.metricPolicy)
+    }
+
+    @Test
+    fun keyboardInputReusesInlineCodeTypographyAndBoxGeometryAsABorder() {
+        var resolved: ResolvedMarkdownText? = null
+        val style = MarkdownStyle(
+            inlineCode = SpanStyle(
+                background = Color(0xFFF1F3F5),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 0.92.em,
+                fontWeight = FontWeight.Bold,
+            ),
+        )
+        ImageComposeScene(width = 240, height = 72) {
+            resolved = resolveMarkdownText(
+                text = MarkdownText(
+                    value = "中Ctrl中",
+                    spans = listOf(
+                        MarkdownTextSpan(MarkdownTextRange(1, 5), MarkdownTextMark.KeyboardInput),
+                    ),
+                ),
+                style = style,
+                textStyle = TextStyle(fontSize = 24.sp),
+                inlineSlots = DefaultMarkdownInlineSlots,
+                onLinkClick = null,
+                onFootnoteClick = null,
+            )
+        }.use { scene -> scene.render(0L) }
+
+        val lowered = assertNotNull(resolved)
+        val keyboardStyle = lowered.annotated.spanStyles.single { it.start == 1 && it.end == 5 }.item
+        assertEquals(style.inlineCode.fontFamily, keyboardStyle.fontFamily)
+        assertEquals(style.inlineCode.fontSize, keyboardStyle.fontSize)
+        assertEquals(style.inlineCode.fontWeight, keyboardStyle.fontWeight)
+        assertEquals(Color.Unspecified, keyboardStyle.background)
+
+        val box = lowered.backgrounds.single()
+        assertEquals(style.keyboardInputHorizontalPadding, box.horizontalPadding)
+        assertEquals(style.keyboardInputVerticalPadding, box.verticalPadding)
+        assertEquals(style.keyboardInputCornerRadius, box.cornerRadius)
+        assertEquals(
+            CjkInlineBackgroundDrawStyle.Border(style.keyboardInputBorderWidth),
+            box.drawStyle,
+        )
+        assertEquals(CjkInlineBackgroundMetricPolicy.ParagraphTextStyle, box.metricPolicy)
     }
 
     @Test
@@ -198,7 +349,6 @@ class MarkdownInlineRenderingTest {
         assertEquals(0, inlineObject.start)
         assertEquals(1, inlineObject.endExclusive)
         assertEquals("图", inlineObject.content.alternateText)
-        assertTrue(!lowered.requiresComposeFallback)
     }
 
     @Test
@@ -211,10 +361,9 @@ class MarkdownInlineRenderingTest {
             Box(Modifier.fillMaxSize().background(Color.White)) {
                 CjkText(
                     text = resolved.annotated,
-                    modifier = Modifier
-                        .markdownInlineInteractionSemantics(resolved.interactions)
-                        .drawTiqianMarkdownInlineDecorations(resolved.decorations) { layoutResult },
+                    modifier = Modifier.markdownInlineInteractionSemantics(resolved.interactions),
                     style = TextStyle(color = Color.Black, fontSize = 24.sp, lineHeight = 36.sp),
+                    inlineDecorations = resolved.decorations.toCjkInlineDecorations(),
                     onTextLayout = { layoutResult = it },
                 )
             }

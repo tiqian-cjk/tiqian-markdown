@@ -14,8 +14,6 @@ internal class MarkdownFootnoteNavigationState(
     private val coroutineScope: CoroutineScope,
 ) {
     private val definitions = mutableMapOf<String, BringIntoViewRequester>()
-    private val references = mutableMapOf<String, MutableList<BringIntoViewRequester>>()
-    private val activeReferences = mutableMapOf<String, BringIntoViewRequester>()
 
     fun registerDefinition(label: String, requester: BringIntoViewRequester) {
         definitions[label] = requester
@@ -25,28 +23,8 @@ internal class MarkdownFootnoteNavigationState(
         if (definitions[label] === requester) definitions.remove(label)
     }
 
-    fun registerReference(label: String, requester: BringIntoViewRequester) {
-        val requesters = references.getOrPut(label) { mutableListOf() }
-        if (requesters.none { it === requester }) requesters += requester
-    }
-
-    fun unregisterReference(label: String, requester: BringIntoViewRequester) {
-        references[label]?.let { requesters ->
-            requesters.removeAll { it === requester }
-            if (requesters.isEmpty()) references.remove(label)
-        }
-        if (activeReferences[label] === requester) activeReferences.remove(label)
-    }
-
-    fun bringDefinitionIntoView(label: String, reference: BringIntoViewRequester) {
-        activeReferences[label] = reference
+    fun bringDefinitionIntoView(label: String) {
         coroutineScope.launch { definitions[label]?.bringIntoView() }
-    }
-
-    fun bringReferenceIntoView(label: String) {
-        coroutineScope.launch {
-            (activeReferences[label] ?: references[label]?.firstOrNull())?.bringIntoView()
-        }
     }
 }
 

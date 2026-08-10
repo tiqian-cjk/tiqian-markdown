@@ -7,14 +7,9 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.LinkInteractionListener
@@ -22,20 +17,19 @@ import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
 import org.tiqian.compose.ruby
-import org.tiqian.core.LayoutResult
-import org.tiqian.core.RichTextRole
-import org.tiqian.core.RichTextSpan
-import org.tiqian.core.positionedRichTextSegments
-import org.tiqian.core.richTextDecorationLineY
-import org.tiqian.core.trimmedRichTextDecorationSegments
+import org.tiqian.compose.CjkInlineBackground
+import org.tiqian.compose.CjkInlineBackgroundDrawStyle
+import org.tiqian.compose.CjkInlineBackgroundMetricPolicy
+import org.tiqian.compose.CjkInlineDecoration
+import org.tiqian.compose.CjkInlineDecorationStyle
 
 /** Compose-facing extension points for inline objects and host-defined inline semantics. */
 class MarkdownInlineSlots(
@@ -135,19 +129,22 @@ sealed interface MarkdownInlineDecoration {
         val dashWidth: Dp = 6.dp,
         val gapWidth: Dp = 4.dp,
     ) : MarkdownInlineDecoration
+
+    data class DottedUnderline(
+        val color: Color = Color.Unspecified,
+        val dotDiameter: Dp = 1.5.dp,
+        val gapWidth: Dp = 2.dp,
+    ) : MarkdownInlineDecoration
 }
 
 internal data class ResolvedMarkdownText(
     val annotated: AnnotatedString,
     val inlineContent: Map<String, InlineTextContent>,
     val tiqianInlineObjects: List<ResolvedTiqianInlineObject>,
+    val backgrounds: List<ResolvedInlineBackground>,
     val decorations: List<ResolvedInlineDecoration>,
     val interactions: List<ResolvedInlineInteraction>,
-) {
-    /** Only unmeasured inline objects require Compose's placeholder layout. */
-    val requiresComposeFallback: Boolean
-        get() = inlineContent.size != tiqianInlineObjects.size
-}
+)
 
 internal data class ResolvedTiqianInlineObject(
     val start: Int,
@@ -160,6 +157,55 @@ internal data class ResolvedInlineDecoration(
     val endExclusive: Int,
     val decoration: MarkdownInlineDecoration,
 )
+
+internal data class ResolvedInlineBackground(
+    val start: Int,
+    val endExclusive: Int,
+    val color: Color,
+    val horizontalPadding: Dp,
+    val verticalPadding: Dp,
+    val cornerRadius: Dp,
+    val adjacentSameStyleClearance: Dp,
+    val drawStyle: CjkInlineBackgroundDrawStyle = CjkInlineBackgroundDrawStyle.Fill,
+    val metricPolicy: CjkInlineBackgroundMetricPolicy = CjkInlineBackgroundMetricPolicy.SpanTextStyle,
+)
+
+internal fun List<ResolvedInlineBackground>.toCjkInlineBackgrounds(): List<CjkInlineBackground> =
+    map { resolved ->
+        CjkInlineBackground(
+            range = TextRange(resolved.start, resolved.endExclusive),
+            color = resolved.color,
+            horizontalPadding = resolved.horizontalPadding,
+            verticalPadding = resolved.verticalPadding,
+            cornerRadius = resolved.cornerRadius,
+            adjacentSameStyleClearance = resolved.adjacentSameStyleClearance,
+            drawStyle = resolved.drawStyle,
+            metricPolicy = resolved.metricPolicy,
+        )
+    }
+
+internal fun List<ResolvedInlineDecoration>.toCjkInlineDecorations(): List<CjkInlineDecoration> =
+    map { resolved ->
+        when (val decoration = resolved.decoration) {
+            is MarkdownInlineDecoration.DashedUnderline -> CjkInlineDecoration(
+                range = TextRange(resolved.start, resolved.endExclusive),
+                style = CjkInlineDecorationStyle.DashedUnderline(
+                    color = decoration.color,
+                    strokeWidth = decoration.strokeWidth,
+                    dashLength = decoration.dashWidth,
+                    gapLength = decoration.gapWidth,
+                ),
+            )
+            is MarkdownInlineDecoration.DottedUnderline -> CjkInlineDecoration(
+                range = TextRange(resolved.start, resolved.endExclusive),
+                style = CjkInlineDecorationStyle.DottedUnderline(
+                    color = decoration.color,
+                    dotDiameter = decoration.dotDiameter,
+                    gapLength = decoration.gapWidth,
+                ),
+            )
+        }
+    }
 
 internal data class ResolvedInlineInteraction(
     val start: Int,
@@ -218,6 +264,7 @@ internal fun resolveMarkdownText(
         when (val mark = span.mark) {
             is MarkdownTextMark.InlineImage -> inlineSlots.image?.let { slot ->
                 key("image", index) { slot(mark, style, textStyle) }?.let { content ->
+                    if (content.metrics == null) return@let
                     replacements += content.toInlineReplacements(
                         spanIndex = index,
                         sourceRange = span.range,
@@ -229,6 +276,7 @@ internal fun resolveMarkdownText(
 
             is MarkdownTextMark.InlineMath -> (inlineSlots.math ?: DefaultMarkdownMathInlineSlot).let { slot ->
                 key("math", index) { slot(mark, style, textStyle) }?.let { content ->
+                    if (content.metrics == null) return@let
                     replacements += content.toInlineReplacements(
                         spanIndex = index,
                         sourceRange = span.range,
@@ -340,6 +388,7 @@ private fun buildResolvedMarkdownText(
     }
     val replacementIndexes = nonOverlappingReplacements.mapTo(mutableSetOf()) { it.spanIndex }
     val base = text.buildInlineBase(nonOverlappingReplacements)
+    val backgrounds = mutableListOf<ResolvedInlineBackground>()
     val decorations = mutableListOf<ResolvedInlineDecoration>()
     val interactions = mutableListOf<ResolvedInlineInteraction>()
     val annotated = AnnotatedString.Builder(base).apply {
@@ -356,19 +405,38 @@ private fun buildResolvedMarkdownText(
                     end,
                 )
 
-                MarkdownTextMark.InlineCode -> addStyle(style.inlineCode, start, end)
-                MarkdownTextMark.Highlight -> addStyle(style.highlight, start, end)
-                MarkdownTextMark.Superscript -> addStyle(
-                    SpanStyle(baselineShift = BaselineShift.Superscript, fontSize = 0.8.em),
-                    start,
-                    end,
-                )
+                MarkdownTextMark.InlineCode -> {
+                    addStyle(style.inlineCode.copy(background = Color.Unspecified), start, end)
+                    if (style.inlineCode.background != Color.Unspecified) {
+                        backgrounds += ResolvedInlineBackground(
+                            start = start,
+                            endExclusive = end,
+                            color = style.inlineCode.background,
+                            horizontalPadding = style.inlineCodeHorizontalPadding,
+                            verticalPadding = style.inlineCodeVerticalPadding,
+                            cornerRadius = style.inlineCodeCornerRadius,
+                            adjacentSameStyleClearance = style.adjacentSameStyleClearance,
+                            metricPolicy = CjkInlineBackgroundMetricPolicy.ParagraphTextStyle,
+                        )
+                    }
+                }
+                MarkdownTextMark.Highlight -> {
+                    addStyle(style.highlight.copy(background = Color.Unspecified), start, end)
+                    if (style.highlight.background != Color.Unspecified) {
+                        backgrounds += ResolvedInlineBackground(
+                            start = start,
+                            endExclusive = end,
+                            color = style.highlight.background,
+                            horizontalPadding = 0.dp,
+                            verticalPadding = style.highlightVerticalPadding,
+                            cornerRadius = style.highlightCornerRadius,
+                            adjacentSameStyleClearance = style.adjacentSameStyleClearance,
+                        )
+                    }
+                }
+                MarkdownTextMark.Superscript -> addStyle(style.superscript, start, end)
 
-                MarkdownTextMark.Subscript -> addStyle(
-                    SpanStyle(baselineShift = BaselineShift.Subscript, fontSize = 0.8.em),
-                    start,
-                    end,
-                )
+                MarkdownTextMark.Subscript -> addStyle(style.subscript, start, end)
 
                 MarkdownTextMark.Inserted -> addStyle(
                     SpanStyle(textDecoration = TextDecoration.Underline),
@@ -376,7 +444,24 @@ private fun buildResolvedMarkdownText(
                     end,
                 )
 
-                MarkdownTextMark.KeyboardInput -> addStyle(style.keyboardInput, start, end)
+                MarkdownTextMark.KeyboardInput -> {
+                    addStyle(style.keyboardInput.copy(background = Color.Unspecified), start, end)
+                    if (style.keyboardInputBorderColor != Color.Unspecified) {
+                        backgrounds += ResolvedInlineBackground(
+                            start = start,
+                            endExclusive = end,
+                            color = style.keyboardInputBorderColor,
+                            horizontalPadding = style.keyboardInputHorizontalPadding,
+                            verticalPadding = style.keyboardInputVerticalPadding,
+                            cornerRadius = style.keyboardInputCornerRadius,
+                            adjacentSameStyleClearance = style.adjacentSameStyleClearance,
+                            drawStyle = CjkInlineBackgroundDrawStyle.Border(
+                                strokeWidth = style.keyboardInputBorderWidth,
+                            ),
+                            metricPolicy = CjkInlineBackgroundMetricPolicy.ParagraphTextStyle,
+                        )
+                    }
+                }
 
                 is MarkdownTextMark.Link -> addLink(
                     LinkAnnotation.Url(
@@ -394,19 +479,31 @@ private fun buildResolvedMarkdownText(
 
                 is MarkdownTextMark.Abbreviation -> {
                     addStyle(style.abbreviation, start, end)
-                    addStringAnnotation("abbreviation", mark.fullText, start, end)
+                    decorations += ResolvedInlineDecoration(
+                        start = start,
+                        endExclusive = end,
+                        decoration = MarkdownInlineDecoration.DottedUnderline(
+                            color = style.abbreviation.color,
+                        ),
+                    )
                 }
 
                 is MarkdownTextMark.Footnote -> {
                     addStyle(
-                        style.footnote.merge(SpanStyle(baselineShift = BaselineShift.Superscript)),
+                        style.footnoteReference.merge(
+                            SpanStyle(baselineShift = BaselineShift.Superscript),
+                        ),
                         start,
                         end,
                     )
                     addLink(
                         LinkAnnotation.Clickable(
                             tag = "footnote",
-                            styles = TextLinkStyles(style = style.link),
+                            styles = TextLinkStyles(
+                                style = style.link.merge(style.footnoteReference).copy(
+                                    textDecoration = TextDecoration.None,
+                                ),
+                            ),
                             linkInteractionListener = { onFootnoteClick?.invoke(mark.label) },
                         ),
                         start,
@@ -486,6 +583,7 @@ private fun buildResolvedMarkdownText(
                 )
             }
         },
+        backgrounds = backgrounds,
         decorations = decorations,
         interactions = interactions,
     )
@@ -570,48 +668,6 @@ internal fun Modifier.markdownInlineInteractionSemantics(
             CustomAccessibilityAction(interaction.accessibilityLabel) {
                 interaction.onClick()
                 true
-            }
-        }
-    }
-}
-
-/** Draws host-defined strokes from Tiqian's final geometry without a second text layout. */
-internal fun Modifier.drawTiqianMarkdownInlineDecorations(
-    decorations: List<ResolvedInlineDecoration>,
-    layoutResult: () -> LayoutResult?,
-): Modifier = if (decorations.isEmpty()) {
-    this
-} else {
-    drawBehind {
-        val layout = layoutResult() ?: return@drawBehind
-        decorations.forEach { resolved ->
-            val decoration = resolved.decoration
-            if (decoration !is MarkdownInlineDecoration.DashedUnderline) return@forEach
-            val strokeWidth = decoration.strokeWidth.toPx()
-            val occupied = layout.positionedRichTextSegments(
-                listOf(
-                    RichTextSpan(
-                        range = org.tiqian.core.TextRange(resolved.start, resolved.endExclusive),
-                        role = RichTextRole.Underline,
-                    ),
-                ),
-            )
-            layout.trimmedRichTextDecorationSegments(occupied).forEach { segment ->
-                val y = layout.richTextDecorationLineY(segment, strokeWidth)
-                drawPath(
-                    path = Path().apply {
-                        moveTo(segment.left, y)
-                        lineTo(segment.right, y)
-                    },
-                    color = decoration.color,
-                    style = Stroke(
-                        width = strokeWidth,
-                        cap = StrokeCap.Round,
-                        pathEffect = PathEffect.dashPathEffect(
-                            floatArrayOf(decoration.dashWidth.toPx(), decoration.gapWidth.toPx()),
-                        ),
-                    ),
-                )
             }
         }
     }

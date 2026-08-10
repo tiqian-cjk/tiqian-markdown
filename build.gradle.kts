@@ -43,7 +43,10 @@ kotlin {
             api(compose.ui)
             api(compose.components.resources)
             implementation(compose.foundation)
+            implementation(compose.material3)
+            implementation("org.jetbrains.compose.ui:ui-backhandler:1.11.1")
             implementation("org.tiqian.math:math-compose:$tiqianSuiteVersion")
+            implementation("com.gallatinapps.syntaxmp:syntaxmp-tokenizer:0.3.0")
         }
 
         commonTest.dependencies {

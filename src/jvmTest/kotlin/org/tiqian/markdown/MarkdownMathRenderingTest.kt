@@ -111,7 +111,6 @@ class MarkdownMathRenderingTest {
         assertEquals(1 + expression.length, inlineObject.endExclusive)
         assertTrue(inlineObject.content.leadingBoundary.participatesInUniformStretch)
         assertTrue(inlineObject.content.trailingBoundary.participatesInUniformStretch)
-        assertTrue(!lowered.requiresComposeFallback, "measured math must stay on the Tiqian inline-object path")
     }
 
     @Test
@@ -241,7 +240,6 @@ class MarkdownMathRenderingTest {
         assertEquals(MarkdownInlinePreferredStretchKind.Relation, boundaries[3].preferredStretch?.kind)
         assertTrue(!boundaries[3].preventsLineBreak, "the boundary after = is the real break")
         assertEquals(boundaries[3].shrinkCapacityPx, boundaries[3].lineEndDiscardableAdvancePx)
-        assertTrue(!lowered.requiresComposeFallback)
     }
 
     @Test

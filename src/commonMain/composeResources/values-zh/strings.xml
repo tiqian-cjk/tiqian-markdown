@@ -1,0 +1,7 @@
+<resources>
+    <string name="close_image_viewer">关闭图片查看器</string>
+    <string name="previous_image">上一张图片</string>
+    <string name="next_image">下一张图片</string>
+    <string name="copy_code">复制代码</string>
+    <string name="code_copied">已复制代码</string>
+</resources>

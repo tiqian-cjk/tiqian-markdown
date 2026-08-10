@@ -72,7 +72,36 @@ data class MarkdownCodeBlock(
     val language: String?,
     val info: String?,
     override val metadata: MarkdownNodeMetadata,
+    /** Optional display name supplied by the adapter; the renderer never guesses it from [info]. */
+    val fileName: String? = null,
+    val showLineNumbers: Boolean = true,
+    /** Source ranges classified by a parser or highlighter without leaking its node types. */
+    val highlights: List<MarkdownCodeHighlight> = emptyList(),
 ) : MarkdownBlock
+
+data class MarkdownCodeHighlight(
+    val range: MarkdownTextRange,
+    val kind: MarkdownCodeHighlightKind,
+)
+
+enum class MarkdownCodeHighlightKind {
+    Comment,
+    Keyword,
+    String,
+    Number,
+    Type,
+    Function,
+    Property,
+    Annotation,
+    Variable,
+    Operator,
+    Punctuation,
+    Tag,
+    Attribute,
+    Constant,
+    Escape,
+    Markup,
+}
 
 data class MarkdownThematicBreak(
     override val metadata: MarkdownNodeMetadata,
@@ -86,6 +115,7 @@ data class MarkdownImageBlock(
     val heightPixels: Int?,
     override val metadata: MarkdownNodeMetadata,
     val attributes: Map<String, String> = emptyMap(),
+    val caption: MarkdownText? = null,
 ) : MarkdownBlock
 
 data class MarkdownMathBlock(
@@ -103,6 +133,7 @@ data class MarkdownTable(
     val columnAlignments: List<MarkdownTableAlignment>,
     val rows: List<MarkdownTableRow>,
     override val metadata: MarkdownNodeMetadata,
+    val caption: MarkdownText? = null,
 ) : MarkdownBlock
 
 enum class MarkdownTableAlignment {

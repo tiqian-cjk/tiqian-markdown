@@ -11,8 +11,16 @@ semantics, and explicit capability issues so unsupported syntax is observable ra
 dropped.
 
 `TiqianMarkdown` owns neither scrolling nor network image loading. Hosts compose it into their own
-scroll container and replace code, image, HTML, table, footnote, custom, thematic-break, or
-unsupported-block slots as needed. The library owns the default math boundary and ships a pinned
+scroll container and may replace code, image, HTML, table, footnote, custom, thematic-break, or
+unsupported-block slots as needed. For the default image path, `MarkdownImageViewerHost` accepts a
+host image provider and owns figure sizing, aspect-ratio reservation, captions and a full-viewport
+viewer. The provider remains responsible for fetching, authentication, caching, decoding and
+animated/vector formats. The viewer retains intrinsic-pixel geometry for zooming, top-aligns long
+images, preserves the gesture anchor while scaling, clamps empty edges, supports double-tap reset and
+zoom, and accepts optional host action controls. Block images from the current render document form
+one ordered browsing session: horizontal paging is enabled only while the active image remains at its
+default fitted width, while a zoomed image retains the gesture for panning. Desktop renders previous
+and next controls; the top bar reports the current and total image count. The library owns the default math boundary and ships a pinned
 Lete Sans Math OpenType backend; hosts select another `MarkdownMathFont` or replace the math slots without taking a
 dependency on that backend. Inline image and math slots receive pure-data marks plus the current
 text style. Measured inline math keeps the original TeX source range and lowers its exact
@@ -20,6 +28,17 @@ advance/ascent/descent into `CjkInlineObject`; Tiqian therefore owns its line br
 placement instead of delegating vertical alignment to a Compose placeholder. Host-only block
 and inline semantics are identified by pure-data `MarkdownCustomBlock` and `MarkdownTextMark.Custom`
 values; parser nodes and Compose content stay in the host adapter.
+
+Colour selection has two named modes without changing any layout geometry. `MarkdownPalette.Default`
+uses Tiqian's stable built-in colours. `MarkdownPalette.Platform` maps the current Material 3 colour
+scheme and base typography into `MarkdownStyle` while retaining Tiqian's body size, line height,
+heading ratios, spacing and marker geometry. Because this artifact is the Compose frontend,
+`TiqianMarkdown` resolves `Platform` by default; `rememberMarkdownStyle(MarkdownPalette.Default)`
+selects the built-in palette explicitly. A host such as Zhihu++ can therefore follow its Material
+theme without exposing the built-in palette as an application preference.
+In `Platform` mode, block-quote prose inherits `onSurfaceVariant`, while the quote rule, table rules
+and thematic breaks use `outlineVariant`; links and other explicitly coloured inline semantics keep
+their own roles.
 
 The formula renderer, rather than this Markdown module, derives source-contiguous fragments from
 its own AST and retains the measured layout used to paint each one. It exposes real line breaks
@@ -40,11 +59,70 @@ automatically wrapped line. If the host adapter retained a Markdown separator sp
 formula and the mark, Tiqian preserves its source range but collapses its layout advance to zero and
 keeps the whole formula-space-mark sequence together.
 
-Text falls back block-by-block to Compose text when Tiqian cannot preserve the lowered semantics.
-Inline image/math providers that expose advance, ascent and descent lower to Tiqian-native inline
-objects, while host decorations and actions consume the same `LayoutResult` used to paint text.
-They do not switch the containing paragraph to a second `BasicText` layout. Only an unmeasured
-inline object or another reported capability issue uses the block-local Compose fallback; custom
-dashed decoration becomes a native solid underline on that fallback path because Compose does not
-expose its underline metric to an external dashed-stroke renderer.
-`MarkdownTextFallbackPolicy.Disabled` keeps a no-fallback dogfood mode.
+Text blocks always use `CjkText`; a capability report is diagnostic data and never switches an
+entire paragraph to a second `BasicText` layout. Inline image/math providers that expose advance,
+ascent and descent lower to Tiqian-native inline objects. An unmeasured provider is not substituted:
+the source alternate text remains in the paragraph instead. Host dashed and dotted decorations
+lower into Tiqian's normal underline role, so they share the final source boundaries, glue trim,
+underline position and skip-ink geometry.
+
+Heading geometry is derived from the body style rather than stored as six unrelated absolute sizes.
+`MarkdownHeadingScales` controls each level's body-size multiplier and line-height ratio; the six
+heading `TextStyle` values remain full visual overrides for weight, family, colour, decoration, or an
+intentional `sp`/`em` geometry override. The defaults follow the large, medium and small heading
+steps described by [CLREQ 7.1.3.2](https://www.w3.org/TR/clreq/#h-heading_font): levels one through
+three use `14/9`, `12/9` and `10/9` of the body size; lower levels stay at body size and use weight
+instead of an increasingly compressed size ladder, except level six at `7/8` body size. Levels one
+and two use medium weight; levels five and six use bold. Gaps involving a heading are selected from
+the adjacent block pair and expressed in body line heights. Every heading level uses `1` line before;
+levels one and two use `1/2` after, levels three and four use `1/4` after, and levels five and six add
+no gap after. Adjacent headings retain one full body line between them.
+The first block has no synthetic leading gap. Other block pairs use one half body line and compact
+content uses one quarter line. Tight-list items add no gap beyond the normal body line height;
+adjacent list blocks use one quarter line, and loose-list items use one half line. The legacy `Dp`
+spacing values are only fallbacks when the body line height cannot be resolved.
+
+List markers occupy the smallest whole-`ic` gutter that contains the widest marker in the list.
+Ordered markers align against the body column. Unordered bullets and task checkboxes are left-aligned
+inside the whole-`ic` marker cell immediately before the body; when the body indent grows to two
+cells, the first cell remains empty and the marker occupies the second. The body column has a one-`ic`
+minimum indent at ordinary measures and a two-`ic` minimum only when the measure is strictly wider
+than Tiqian's
+`KinsokuMode.MeasureAdaptive.strictAboveEm` boundary (32 `ic` by default). A wider marker always
+expands the gutter instead of being squeezed into either minimum. Task-list source markers (`[x]`
+and `[ ]`) are not rendered as text: both lower to disabled-state Material Symbols in a one-`ic`
+marker cell whose vertical position
+comes from the same measured body-font metrics and first baseline as the list body.
+
+Code blocks use one rounded container with a file/language metadata row, a copy action, a line-number
+column, and horizontally scrolling source. The displayed language label is uppercased without changing
+the adapter-provided language identifier or copied source. The compact copy control fits inside the
+metadata row without determining its height: metadata text fixes the row height, then the control takes
+the remaining inset height as both its height and width. Its rounded rectangle is inset from the code
+frame and uses the corresponding concentric corner radius. Syntax colour never depends on parser nodes:
+explicit adapter-provided ranges take precedence, while the default pure-data lexical highlighter derives
+ranges from the fenced language and source text. Hosts can replace it with a grammar-aware
+`MarkdownCodeHighlighter` without leaking parser nodes. Display math uses
+the body font size by default, remains horizontally centred, and has no default background; an
+explicit non-transparent `mathBackground` restores the styled container.
+
+Tables draw one outer rounded border and exactly one rule at every internal row or column boundary;
+cells never stack their own complete borders. Columns start from their natural single-line widths;
+spare width raises the narrowest columns toward their wider neighbours, while an insufficient measure
+uses the configured minimum widths and horizontal scrolling. Table prose uses `7/8` of the body type geometry,
+with medium-weight header cells. Inline formula marks inside cells use the same measured inline-math
+path as prose rather than a text approximation.
+Adapters can attach upright medium-size captions as pure `MarkdownText`: figure captions render
+below the image and table captions above the table. A host replacing either block slot owns the
+corresponding caption placement but receives the same model field.
+
+Footnote references retain the body font size, shift to the superscript position, and use a link
+colour without an underline. Definitions use the smaller footnote text style and no renderer-added
+return glyph. Every occurrence of a repeated reference links to the same definition. Definitions do
+not hide a stateful backlink in their plain marker; a future reverse-navigation presentation must
+expose every occurrence explicitly instead of guessing a destination from interaction history.
+`MarkdownFootnotePlacement` offers deterministic paragraph-end, heading-section-end,
+and article-end placement; paragraph-end is the default. The first reference owns a definition,
+multiple definitions follow first-reference order, and an unreferenced definition remains at the
+article end. Placement never changes with viewport distance. Paged footnotes and sidenotes belong at
+the future PageFlow boundary.

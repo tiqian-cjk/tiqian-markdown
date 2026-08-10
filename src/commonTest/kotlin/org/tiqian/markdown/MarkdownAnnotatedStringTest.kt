@@ -6,6 +6,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.em
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -50,7 +51,7 @@ class MarkdownAnnotatedStringTest {
     }
 
     @Test
-    fun abbreviationKeepsExpandedTextAnnotation() {
+    fun abbreviationDoesNotInventAnUnconsumedStringAnnotation() {
         val text = MarkdownText(
             value = "CLREQ",
             spans = listOf(
@@ -63,10 +64,7 @@ class MarkdownAnnotatedStringTest {
 
         val annotated = text.toAnnotatedString(MarkdownStyle())
 
-        assertEquals(
-            "Requirements for Chinese Text Layout",
-            annotated.getStringAnnotations("abbreviation", 0, annotated.length).single().item,
-        )
+        assertTrue(annotated.getStringAnnotations(0, annotated.length).isEmpty())
     }
 
     @Test
@@ -84,18 +82,80 @@ class MarkdownAnnotatedStringTest {
         val annotated = text.toAnnotatedString(
             MarkdownStyle(
                 keyboardInput = keyboardStyle,
-                footnote = footnoteStyle,
+                footnoteReference = footnoteStyle,
             ),
         )
 
         assertTrue(annotated.spanStyles.any { it.start == 0 && it.end == 4 && it.item.color == Color.Red })
         assertTrue(
             annotated.spanStyles.any {
-                it.start == 4 && it.end == 7 &&
+                    it.start == 4 && it.end == 7 &&
                     it.item.color == Color.Green &&
+                    it.item.fontSize == androidx.compose.ui.unit.TextUnit.Unspecified &&
                     it.item.baselineShift == BaselineShift.Superscript
             },
         )
         assertTrue(annotated.getLinkAnnotations(4, 7).single().item is LinkAnnotation.Clickable)
+    }
+
+    @Test
+    fun repeatedFootnoteReferencesEachLinkToTheSharedDefinition() {
+        val activatedLabels = mutableListOf<String>()
+        val text = MarkdownText(
+            value = "甲[1]乙[1]",
+            spans = listOf(
+                MarkdownTextSpan(MarkdownTextRange(1, 4), MarkdownTextMark.Footnote("same", 1)),
+                MarkdownTextSpan(MarkdownTextRange(5, 8), MarkdownTextMark.Footnote("same", 1)),
+            ),
+        )
+
+        val annotated = text.toAnnotatedString(
+            style = MarkdownStyle(),
+            onFootnoteClick = { activatedLabels += it },
+        )
+        val links = annotated.getLinkAnnotations(0, annotated.length)
+
+        assertEquals(2, links.size)
+        links.forEach { link -> link.item.linkInteractionListener?.onClick(link.item) }
+        assertEquals(listOf("same", "same"), activatedLabels)
+    }
+
+    @Test
+    fun superAndSubscriptUseOpticallyCompensatedEditorialGeometry() {
+        val text = MarkdownText(
+            value = "x2H2",
+            spans = listOf(
+                MarkdownTextSpan(MarkdownTextRange(1, 2), MarkdownTextMark.Superscript),
+                MarkdownTextSpan(MarkdownTextRange(3, 4), MarkdownTextMark.Subscript),
+            ),
+        )
+
+        val annotated = text.toAnnotatedString(MarkdownStyle())
+        val superscript = annotated.spanStyles.single { it.start == 1 && it.end == 2 }.item
+        val subscript = annotated.spanStyles.single { it.start == 3 && it.end == 4 }.item
+
+        assertEquals(0.75.em, superscript.fontSize)
+        assertEquals(FontWeight.Medium, superscript.fontWeight)
+        assertEquals(BaselineShift.Superscript, superscript.baselineShift)
+        assertEquals(0.75.em, subscript.fontSize)
+        assertEquals(FontWeight.Medium, subscript.fontWeight)
+        assertEquals(BaselineShift(-0.25f), subscript.baselineShift)
+    }
+
+    @Test
+    fun defaultFootnoteReferenceUsesSuperscriptOpticalCompensation() {
+        val text = MarkdownText(
+            value = "[1]",
+            spans = listOf(
+                MarkdownTextSpan(MarkdownTextRange(0, 3), MarkdownTextMark.Footnote("1", 1)),
+            ),
+        )
+
+        val annotated = text.toAnnotatedString(MarkdownStyle())
+        val reference = annotated.spanStyles.single { it.start == 0 && it.end == 3 }.item
+
+        assertEquals(0.75.em, reference.fontSize)
+        assertEquals(FontWeight.Medium, reference.fontWeight)
+        assertEquals(BaselineShift.Superscript, reference.baselineShift)
     }
 }

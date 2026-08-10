@@ -69,7 +69,7 @@ data class MarkdownMathStyle(
     val color: Color = Color.Unspecified,
     val inlineFontSize: TextUnit = TextUnit.Unspecified,
     val displayFontSize: TextUnit = TextUnit.Unspecified,
-    val displayScale: Float = 1.2f,
+    val displayScale: Float = 1f,
     val blockCornerRadius: Dp = 8.dp,
 ) {
     init {
@@ -295,18 +295,22 @@ fun DefaultMarkdownMathBlock(
         baseFontSize
     }
     val color = resolveMathColor(style.math.color, style.body.color, Color.Black)
-    Box(
-        modifier = Modifier
+    val containerModifier = if (style.mathBackground.isSpecified) {
+        Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(style.math.blockCornerRadius))
             .background(style.mathBackground)
-            .padding(style.codePadding),
-    ) {
-        BoxWithConstraints(
+            .padding(style.codePadding)
+    } else {
+        Modifier.fillMaxWidth()
+    }
+    BoxWithConstraints(modifier = containerModifier) {
+        val viewportWidth = maxWidth
+        Box(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         ) {
             Box(
-                modifier = Modifier.widthIn(min = maxWidth),
+                modifier = Modifier.widthIn(min = viewportWidth),
                 contentAlignment = Alignment.Center,
             ) {
                 TiqianMath(
