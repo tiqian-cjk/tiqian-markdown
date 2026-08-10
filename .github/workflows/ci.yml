@@ -50,6 +50,15 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
 
+      # Tiqian's :shaping:native-font pins CMake 4.3.2, which the Android SDK does not
+      # bundle; publishing Tiqian to Maven Local builds it. Put a matching CMake on PATH
+      # so AGP resolves it, mirroring local homebrew installs.
+      - name: Install CMake 4.3.2 for Tiqian native-font
+        run: |
+          pipx install "cmake==4.3.2"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/cmake" --version
+
       - name: Test JVM and compile Android
         env:
           TIQIAN_CHECKOUT: Tiqian
