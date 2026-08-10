@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
@@ -29,10 +30,44 @@ import org.tiqian.core.getBoundingBoxes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalComposeUiApi::class)
 class MarkdownInlineRenderingTest {
+    @Test
+    fun unchangedProseReusesItsResolvedInlineModelAcrossRecomposition() {
+        val recompositionTrigger = mutableStateOf(0)
+        val resolvedModels = mutableListOf<ResolvedMarkdownText>()
+        val linkClick: (String) -> Unit = {}
+        ImageComposeScene(width = 240, height = 72) {
+            recompositionTrigger.value
+            resolvedModels += resolveMarkdownText(
+                text = MarkdownText(
+                    value = "中文链接与强调",
+                    spans = listOf(
+                        MarkdownTextSpan(MarkdownTextRange(0, 2), MarkdownTextMark.Strong),
+                        MarkdownTextSpan(
+                            MarkdownTextRange(2, 4),
+                            MarkdownTextMark.Link("https://example.com"),
+                        ),
+                    ),
+                ),
+                style = MarkdownStyle(),
+                textStyle = TextStyle(fontSize = 24.sp),
+                inlineSlots = DefaultMarkdownInlineSlots,
+                onLinkClick = linkClick,
+                onFootnoteClick = null,
+            )
+        }.use { scene ->
+            scene.render(0L)
+            val first = resolvedModels.last()
+            recompositionTrigger.value++
+            scene.render(16_000_000L)
+            assertSame(first, resolvedModels.last())
+        }
+    }
+
     @Test
     fun inlineImageSlotIsPlacedInsideItsParagraph() {
         val pixels = ImageComposeScene(width = 240, height = 72) {

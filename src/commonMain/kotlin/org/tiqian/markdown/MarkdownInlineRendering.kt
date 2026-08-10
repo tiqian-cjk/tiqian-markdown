@@ -4,6 +4,7 @@ import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -188,6 +189,29 @@ internal fun resolveMarkdownText(
     onLinkClick: ((String) -> Unit)?,
     onFootnoteClick: ((String) -> Unit)?,
 ): ResolvedMarkdownText {
+    val needsInlineSlotResolution = remember(text.spans, inlineSlots) {
+        text.spans.any { span ->
+            when (span.mark) {
+                is MarkdownTextMark.InlineMath -> true
+                is MarkdownTextMark.InlineImage -> inlineSlots.image != null
+                is MarkdownTextMark.Custom -> inlineSlots.custom != null
+                else -> false
+            }
+        }
+    }
+    if (!needsInlineSlotResolution) {
+        return remember(text, style, onLinkClick, onFootnoteClick) {
+            buildResolvedMarkdownText(
+                text = text,
+                style = style,
+                replacements = emptyList(),
+                customPresentations = emptyMap(),
+                onLinkClick = onLinkClick,
+                onFootnoteClick = onFootnoteClick,
+            )
+        }
+    }
+
     val replacements = mutableListOf<InlineReplacement>()
     val customPresentations = mutableListOf<CustomPresentation>()
     text.spans.forEachIndexed { index, span ->
@@ -224,14 +248,25 @@ internal fun resolveMarkdownText(
         }
     }
 
-    return buildResolvedMarkdownText(
-        text = text,
-        style = style,
-        replacements = replacements.sortedBy { it.range.start },
-        customPresentations = customPresentations.associateBy { it.spanIndex },
-        onLinkClick = onLinkClick,
-        onFootnoteClick = onFootnoteClick,
-    )
+    val orderedReplacements = replacements.sortedBy { it.range.start }
+    val presentationsByIndex = customPresentations.associateBy { it.spanIndex }
+    return remember(
+        text,
+        style,
+        orderedReplacements,
+        presentationsByIndex,
+        onLinkClick,
+        onFootnoteClick,
+    ) {
+        buildResolvedMarkdownText(
+            text = text,
+            style = style,
+            replacements = orderedReplacements,
+            customPresentations = presentationsByIndex,
+            onLinkClick = onLinkClick,
+            onFootnoteClick = onFootnoteClick,
+        )
+    }
 }
 
 private fun MarkdownInlineContent.withSourceAlternateText(sourceText: String): MarkdownInlineContent =

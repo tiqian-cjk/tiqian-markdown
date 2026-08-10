@@ -24,6 +24,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
@@ -336,22 +337,36 @@ private fun MarkdownTextBlock(
             }
         }
     }
-    val handleFootnoteClick: ((String) -> Unit)? = if (
-        footnoteNavigationState != null || onFootnoteClick != null
-    ) {
-        { label ->
-            footnoteNavigationState?.bringDefinitionIntoView(label, bringIntoViewRequester)
-            onFootnoteClick?.invoke(label)
+    val currentLinkClick = rememberUpdatedState(onLinkClick)
+    val currentFootnoteClick = rememberUpdatedState(onFootnoteClick)
+    val currentFootnoteNavigation = rememberUpdatedState(footnoteNavigationState)
+    val stableLinkClick = remember(onLinkClick != null) {
+        if (onLinkClick == null) {
+            null
+        } else {
+            { destination: String ->
+                currentLinkClick.value?.invoke(destination)
+                Unit
+            }
         }
-    } else {
-        null
+    }
+    val handleFootnoteClick = remember(footnoteNavigationState != null || onFootnoteClick != null) {
+        if (footnoteNavigationState == null && onFootnoteClick == null) {
+            null
+        } else {
+            { label: String ->
+                currentFootnoteNavigation.value?.bringDefinitionIntoView(label, bringIntoViewRequester)
+                currentFootnoteClick.value?.invoke(label)
+                Unit
+            }
+        }
     }
     val resolved = resolveMarkdownText(
         text = text,
         style = markdownStyle,
         textStyle = textStyle,
         inlineSlots = inlineSlots,
-        onLinkClick = onLinkClick,
+        onLinkClick = stableLinkClick,
         onFootnoteClick = handleFootnoteClick,
     )
     val density = LocalDensity.current
