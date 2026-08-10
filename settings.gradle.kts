@@ -17,10 +17,19 @@ dependencyResolutionManagement {
 
 rootProject.name = "markdown-compose"
 
+include(":preview")
+
+// Android Studio's model importer cannot currently map Android-only modules from
+// the Tiqian composite builds (for example :shaping:native-font). During IDE
+// sync, resolve the same lockstep artifacts from Maven Local instead; normal
+// Gradle and CI builds keep source substitution enabled.
+val isIdeaSync = providers.systemProperty("idea.sync.active")
+    .map(String::toBoolean)
+    .getOrElse(false)
 val useLocalTiqianCheckouts = providers.gradleProperty("useLocalTiqianCheckouts")
     .orElse(providers.environmentVariable("USE_LOCAL_TIQIAN_CHECKOUTS"))
     .map(String::toBoolean)
-    .getOrElse(true)
+    .getOrElse(!isIdeaSync)
 
 val tiqianCheckout = providers.gradleProperty("tiqianCheckout").orNull
     ?: System.getenv("TIQIAN_CHECKOUT")

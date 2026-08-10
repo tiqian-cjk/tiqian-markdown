@@ -54,7 +54,7 @@ jobs:
         env:
           TIQIAN_CHECKOUT: Tiqian
           MATH_COMPOSE_CHECKOUT: math-compose
-        run: ./gradlew jvmTest compileAndroidMain
+        run: ./gradlew jvmTest compileAndroidMain :preview:compileKotlinJvm
 
       - name: Verify pure Maven consumption
         env:
