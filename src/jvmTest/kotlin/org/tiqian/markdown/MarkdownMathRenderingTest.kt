@@ -80,6 +80,26 @@ class MarkdownMathRenderingTest {
     }
 
     @Test
+    fun defaultInlineRendererConnectsHostTextForChineseLatinAndBoldTextCommands() {
+        val expression = "x+\\text{中文 rate}+\\textbf{重点}"
+        var content: MarkdownInlineContent? = null
+        ImageComposeScene(width = 560, height = 140) {
+            Box(Modifier.fillMaxSize().background(Color.White)) {
+                content = DefaultMarkdownMathInlineSlot(
+                    MarkdownTextMark.InlineMath(expression),
+                    MarkdownStyle(),
+                    TextStyle(fontSize = 24.sp),
+                )
+                content?.content?.invoke(content!!.alternateText)
+            }
+        }.use { scene -> scene.render(0L) }
+
+        val rendered = assertNotNull(content)
+        assertEquals(expression, rendered.alternateText)
+        assertTrue(assertNotNull(rendered.metrics).widthPx > 0f)
+    }
+
+    @Test
     fun defaultMathLowersToOneTiqianInlineObjectInsteadOfComposeTextCenter() {
         val expression = "\\frac{x_1}{y^2}"
         val source = "前${expression}后"

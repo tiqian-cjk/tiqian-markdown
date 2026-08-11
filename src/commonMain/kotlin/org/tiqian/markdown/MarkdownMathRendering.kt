@@ -110,6 +110,7 @@ private fun defaultMarkdownInlineMath(
     if (expression.isBlank()) return null
 
     val fontFace = rememberMarkdownMathFontFace(style.math.font)
+    val textRunProvider = rememberMarkdownMathTextRunProvider(hostTextStyle)
     val fontSize = resolveFontSize(
         preferred = style.math.inlineFontSize,
         fallback = hostTextStyle.fontSize,
@@ -121,6 +122,8 @@ private fun defaultMarkdownInlineMath(
         mode = MathMode.Inline,
         style = hostTextStyle.copy(fontSize = fontSize, color = color),
         fontFace = fontFace,
+        textRunProvider = textRunProvider,
+        textLocale = MarkdownMathTextLocale,
     )
     val layout = formula.layoutResult ?: return null
     val density = LocalDensity.current
@@ -284,6 +287,7 @@ fun DefaultMarkdownMathBlock(
     if (expression.isEmpty()) return
 
     val fontFace = rememberMarkdownMathFontFace(style.math.font)
+    val textRunProvider = rememberMarkdownMathTextRunProvider(style.body)
     val baseFontSize = resolveFontSize(
         preferred = style.math.displayFontSize,
         fallback = style.body.fontSize,
@@ -319,6 +323,8 @@ fun DefaultMarkdownMathBlock(
                     style = TextStyle(fontSize = fontSize, color = color),
                     softWrap = false,
                     fontFace = fontFace,
+                    textRunProvider = textRunProvider,
+                    textLocale = MarkdownMathTextLocale,
                 )
             }
         }
