@@ -69,7 +69,6 @@ class MarkdownHeadingStyleTest {
         assertEquals(0f, spacing.linesBetween(previousLevel = 6, nextLevel = null))
         assertEquals(1f, spacing.linesBetween(previousLevel = 2, nextLevel = 3))
         assertNull(spacing.linesBetween(previousLevel = null, nextLevel = null))
-        assertEquals(1f / 8f, MarkdownStyle().footnoteBlockSpacingBodyLines)
         assertEquals(1f, MarkdownStyle().displayBlockSpacingBodyLines)
         assertEquals(0f, MarkdownStyle().tightListItemSpacingBodyLines)
         assertEquals(1f / 4f, MarkdownStyle().listBlockSpacingBodyLines)

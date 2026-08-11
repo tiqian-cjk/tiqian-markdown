@@ -32,19 +32,26 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.use
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import org.tiqian.markdown.MarkdownRenderDocument
+import org.tiqian.markdown.MarkdownStyle
 import org.tiqian.markdown.MarkdownCustomInlinePresentation
 import org.tiqian.markdown.MarkdownInlineDecoration
 import org.tiqian.markdown.MarkdownInlineSlots
@@ -53,6 +60,9 @@ import org.tiqian.markdown.MarkdownImageLoadState
 import org.tiqian.markdown.MarkdownImageProvider
 import org.tiqian.markdown.MarkdownImageViewerHost
 import org.tiqian.markdown.TiqianMarkdown
+import org.jetbrains.skia.EncodedImageFormat
+import java.io.File
+import kotlin.system.exitProcess
 
 private data class PreviewCase(
     val name: String,
@@ -62,6 +72,7 @@ private data class PreviewCase(
 )
 
 private val PreviewCases = listOf(
+    PreviewCase("角标吸附", PreviewDocuments.footnoteAttachment, width = 360),
     PreviewCase("完整文章", PreviewDocuments.fullArticle, width = 600, horizontalPadding = 32),
     PreviewCase("标题层级", PreviewDocuments.headings, width = 420),
     PreviewCase("行内装饰", PreviewDocuments.inlineStyles, width = 420),
@@ -128,13 +139,76 @@ private fun rememberPreviewImageProvider(): MarkdownImageProvider {
     }
 }
 
-fun main() = application {
-    Window(
-        onCloseRequest = ::exitApplication,
-        title = "Tiqian Markdown 样式预览",
-        state = rememberWindowState(size = DpSize(1260.dp, 900.dp)),
-    ) {
-        MarkdownPreviewApp()
+fun main(args: Array<String>) {
+    if ("--footnote-attachment-specimen" in args) {
+        exportFootnoteAttachmentSpecimen()
+        exitProcess(0)
+    } else {
+        application {
+            Window(
+                onCloseRequest = ::exitApplication,
+                title = "Tiqian Markdown 样式预览",
+                state = rememberWindowState(size = DpSize(1260.dp, 900.dp)),
+            ) {
+                MarkdownPreviewApp()
+            }
+        }
+    }
+}
+
+private val FootnoteSpecimenColorScheme = lightColorScheme(
+    primary = Color(0xFF315E78),
+    onSurface = Color(0xFF252827),
+    onSurfaceVariant = Color(0xFF5A6264),
+    surface = Color(0xFFFCFBF7),
+    background = Color(0xFFFCFBF7),
+    outlineVariant = Color(0xFFCFD3D1),
+)
+
+@OptIn(ExperimentalComposeUiApi::class)
+private fun exportFootnoteAttachmentSpecimen() {
+    val output = File("build/specimens/footnote-attachment.png").absoluteFile
+    output.parentFile.mkdirs()
+    ImageComposeScene(width = 2176, height = 720, density = Density(2f)) {
+        FootnoteAttachmentSpecimen()
+    }.use { scene ->
+        scene.render(0L).use { image ->
+            checkNotNull(image.encodeToData(EncodedImageFormat.PNG)).use { data ->
+                output.writeBytes(data.bytes)
+            }
+        }
+    }
+    println("specimen=${output.absolutePath} bytes=${output.length()}")
+}
+
+@Composable
+private fun FootnoteAttachmentSpecimen() {
+    MaterialTheme(colorScheme = FootnoteSpecimenColorScheme) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(horizontal = 40.dp, vertical = 34.dp),
+        ) {
+            Text("角标吸附", style = MaterialTheme.typography.headlineMedium)
+            Spacer(Modifier.height(28.dp))
+            TiqianMarkdown(
+                document = PreviewDocuments.footnoteAttachment,
+                modifier = Modifier.fillMaxWidth(),
+                style = MarkdownStyle(
+                    body = TextStyle(
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 36.sp,
+                        lineHeight = 56.sp,
+                    ),
+                    link = MarkdownStyle().link.copy(color = MaterialTheme.colorScheme.primary),
+                    footnoteReference = MarkdownStyle().footnoteReference.copy(
+                        color = MaterialTheme.colorScheme.primary,
+                    ),
+                    blockSpacingBodyLines = 1f / 2f,
+                ),
+            )
+        }
     }
 }
 

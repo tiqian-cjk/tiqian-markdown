@@ -2,8 +2,8 @@ package org.tiqian.markdown
 
 /** Where footnote definitions are inserted in continuous-flow rendering. */
 enum class MarkdownFootnotePlacement {
-    /** Immediately after the paragraph or other block containing the first reference. */
-    AfterParagraph,
+    /** Immediately after the outer block containing the first reference. */
+    AfterBlock,
 
     /** At the end of the Markdown heading section containing the first reference. */
     AfterSection,
@@ -21,7 +21,7 @@ internal fun MarkdownRenderDocument.placeFootnotes(
 
     val content = stripFootnoteDefinitions(blocks)
     return when (placement) {
-        MarkdownFootnotePlacement.AfterParagraph -> content.placeFootnotesAfterFirstReference(definitions)
+        MarkdownFootnotePlacement.AfterBlock -> content.placeFootnotesAfterFirstReferenceBlock(definitions)
         MarkdownFootnotePlacement.AfterSection -> content.placeFootnotesAtSectionEnds(definitions)
         MarkdownFootnotePlacement.EndOfArticle -> content + definitions.values
     }
@@ -63,7 +63,7 @@ private fun stripFootnoteDefinitions(blocks: List<MarkdownBlock>): List<Markdown
         }
     }
 
-private fun List<MarkdownBlock>.placeFootnotesAfterFirstReference(
+private fun List<MarkdownBlock>.placeFootnotesAfterFirstReferenceBlock(
     definitions: LinkedHashMap<String, MarkdownFootnoteDefinition>,
 ): List<MarkdownBlock> {
     val assigned = mutableSetOf<String>()
@@ -72,24 +72,13 @@ private fun List<MarkdownBlock>.placeFootnotesAfterFirstReference(
         definitions[label]?.takeIf { assigned.add(label) }
     }
 
-    fun place(blocks: List<MarkdownBlock>): List<MarkdownBlock> = buildList {
-        blocks.forEach { block ->
-            when (block) {
-                is MarkdownBlockQuote -> add(block.copy(blocks = place(block.blocks)))
-                is MarkdownList -> add(
-                    block.copy(
-                        items = block.items.map { item -> item.copy(blocks = place(item.blocks)) },
-                    ),
-                )
-                else -> {
-                    add(block)
-                    addAll(definitionsFor(block.directFootnoteReferences()))
-                }
-            }
+    val placed = buildList {
+        this@placeFootnotesAfterFirstReferenceBlock.forEach { block ->
+            add(block)
+            addAll(definitionsFor(block.allFootnoteReferences()))
         }
     }
-
-    return place(this) + definitions.values.filterNot { it.label in assigned }
+    return placed + definitions.values.filterNot { it.label in assigned }
 }
 
 private fun List<MarkdownBlock>.placeFootnotesAtSectionEnds(

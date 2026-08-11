@@ -60,6 +60,24 @@ fun render(document: MarkdownRenderDocument, count: Int = 2) {
         assertTrue(DefaultMarkdownCodeHighlighter.highlight("fun value() = 1", "unknown-language").isEmpty())
     }
 
+    @Test
+    fun python3PreservesItsLabelWhileUsingThePythonTokenizer() {
+        val language = resolveMarkdownCodeLanguage(" python3 ")
+        val code = "def answer(): return 3"
+        val highlights = DefaultMarkdownCodeHighlighter.highlight(code, "python3")
+
+        assertEquals(
+            MarkdownCodeLanguage(
+                rawLabel = "python3",
+                tokenizerLabel = "python",
+                displayLabel = "PYTHON3",
+            ),
+            language,
+        )
+        assertKind(code, highlights, "def", MarkdownCodeHighlightKind.Keyword)
+        assertKind(code, highlights, "3", MarkdownCodeHighlightKind.Number)
+    }
+
     private fun assertKind(
         code: String,
         highlights: List<MarkdownCodeHighlight>,

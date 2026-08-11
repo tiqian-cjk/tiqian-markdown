@@ -218,8 +218,6 @@ data class MarkdownStyle(
     val displayBlockSpacing: Dp = 24.dp,
     val displayBlockSpacingBodyLines: Float = 1f,
     val proseMeasure: MarkdownProseMeasure = MarkdownProseMeasure(),
-    /** Gap from an owning block to its following footnote, and between adjacent footnotes. */
-    val footnoteBlockSpacingBodyLines: Float = 1f / 8f,
     val quoteBarColor: Color = Color(0xFFD0D7DE),
     val quoteBarWidth: Dp = 3.dp,
     val quoteContentPadding: Dp = 12.dp,
@@ -271,6 +269,9 @@ data class MarkdownStyle(
     ),
     /** Corner radius for images embedded in the article; the full-screen viewer remains uncropped. */
     val imageCornerRadius: Dp = 8.dp,
+    /** One physical-pixel edge that keeps pale images distinct from the article surface. */
+    val imageOutlineWidth: Dp = Dp.Hairline,
+    val imageOutlineColor: Color = Color.Black.copy(alpha = 0.15f),
     /** Figure/table captions are upright even when surrounding prose is emphasized. */
     val caption: TextStyle = body.merge(
         TextStyle(
@@ -281,6 +282,8 @@ data class MarkdownStyle(
     ),
     /** Figure/table captions inset by half a body ideographic character on both sides. */
     val captionHorizontalIndent: Ic = 0.5f.ic,
+    /** A narrow image stays centred while its caption keeps a readable line measure. */
+    val figureCaptionMinimumWidth: Ic = 12.ic,
     val thematicBreakColor: Color = Color(0xFFD8DEE4),
     val headingScales: MarkdownHeadingScales = MarkdownHeadingScales(),
     val headingSpacing: MarkdownHeadingSpacing = MarkdownHeadingSpacing(),

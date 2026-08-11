@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -47,6 +46,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.AlignmentLine
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
@@ -97,6 +97,7 @@ import org.tiqian.markdown.generated.resources.ic_content_copy_16dp
 import org.tiqian.markdown.generated.resources.copy_code
 import kotlinx.coroutines.delay
 import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.roundToInt
 
 /** Slots for non-prose blocks. The default set never performs network loading. */
@@ -133,7 +134,7 @@ fun TiqianMarkdown(
     inlineSlots: MarkdownInlineSlots = DefaultMarkdownInlineSlots,
     onLinkClick: ((String) -> Unit)? = null,
     onFootnoteClick: ((String) -> Unit)? = null,
-    footnotePlacement: MarkdownFootnotePlacement = MarkdownFootnotePlacement.AfterParagraph,
+    footnotePlacement: MarkdownFootnotePlacement = MarkdownFootnotePlacement.AfterBlock,
     codeHighlighter: MarkdownCodeHighlighter = DefaultMarkdownCodeHighlighter,
 ) {
     val density = LocalDensity.current
@@ -193,8 +194,6 @@ private fun MarkdownBlocks(
     val bodyLineHeight = style.bodyLineHeightSpOrNull()?.let { lineHeight ->
         with(density) { lineHeight.toDp() }
     }
-    val footnoteBlockSpacing = bodyLineHeight?.times(style.footnoteBlockSpacingBodyLines)
-        ?: style.compactBlockSpacing / 2f
     Column(modifier) {
         blocks.forEachIndexed { index, block ->
             if (index > 0) {
@@ -204,7 +203,7 @@ private fun MarkdownBlocks(
                 val adjacentDisplayBlock = previousBlock.isMarkdownDisplayBlock() ||
                     block.isMarkdownDisplayBlock()
                 val spacing = when {
-                    block is MarkdownFootnoteDefinition -> footnoteBlockSpacing
+                    block is MarkdownFootnoteDefinition -> 0.dp
                     bodyLineHeight != null -> {
                         val ordinaryGapBodyLines = when {
                             headingGapBodyLines != null -> headingGapBodyLines
@@ -306,8 +305,7 @@ private fun rememberFootnoteMarkerWidths(
                         paragraphStyle = paragraphStyle,
                     ).size.width
                 }
-                val gutter = wholeCellMarkerGutter(widestMarker, coreMarkerTextStyle.fontSize)
-                val width = with(density) { gutter.toPx(coreMarkerTextStyle.fontSize).toDp() }
+                val width = with(density) { widestMarker.toDp() }
                 for (index in start until end) put(index, width)
                 start = end
             }
@@ -441,8 +439,8 @@ private fun MarkdownListBlock(
             }
         }
     }
-    val markerGutter = remember(markers, coreMarkerTextStyle, markerMeasureParagraphStyle, markerMeasurer) {
-        val widestMarker = markers.maxOfOrNull { marker ->
+    val widestMarkerWidthPx = remember(markers, coreMarkerTextStyle, markerMeasureParagraphStyle, markerMeasurer) {
+        markers.maxOfOrNull { marker ->
             when (marker) {
                 is MarkdownListMarker.Task -> coreMarkerTextStyle.fontSize
                 is MarkdownListMarker.Text -> markerMeasurer.measure(
@@ -453,7 +451,6 @@ private fun MarkdownListBlock(
                 ).size.width
             }
         } ?: 0f
-        wholeCellMarkerGutter(widestMarker, coreMarkerTextStyle.fontSize)
     }
     val markerReferenceLayout = remember(coreMarkerTextStyle, markerMeasureParagraphStyle, markerMeasurer) {
         markerMeasurer.measure(
@@ -463,7 +460,13 @@ private fun MarkdownListBlock(
             paragraphStyle = markerMeasureParagraphStyle,
         )
     }
-    val markerWidth = with(density) { markerGutter.toPx(coreMarkerTextStyle.fontSize).toDp() }
+    val markerWidth = with(density) { widestMarkerWidthPx.toDp() }
+    // This whole-cell band controls only where left-aligned bullets/tasks sit.
+    // It is not the width subtracted from the body measure.
+    val markerAlignmentBand = ceil(widestMarkerWidthPx / coreMarkerTextStyle.fontSize)
+        .toInt()
+        .coerceAtLeast(1)
+        .ic
     val bodyLineHeight = style.bodyLineHeightSpOrNull()?.let { lineHeight ->
         with(density) { lineHeight.toDp() }
     }
@@ -478,13 +481,15 @@ private fun MarkdownListBlock(
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val longMeasure = maxWidth > longMeasureBreakpoint
         val minimumContentIndent = if (longMeasure) style.listLongContentIndent else style.listContentIndent
-        val contentIndent = if (markerGutter.count >= minimumContentIndent.count) {
-            markerGutter
-        } else {
-            minimumContentIndent
+        val minimumContentIndentWidth = with(density) {
+            minimumContentIndent.toPx(coreMarkerTextStyle.fontSize).toDp()
         }
+        val minimumMarkerRegionWidth = maxOf(markerWidth, minimumContentIndentWidth)
         val markerLeadingSpace = with(density) {
-            (contentIndent + -markerGutter).toPx(coreMarkerTextStyle.fontSize).toDp()
+            (minimumContentIndent + -markerAlignmentBand)
+                .toPx(coreMarkerTextStyle.fontSize)
+                .coerceAtLeast(0f)
+                .toDp()
         }
 
         Column {
@@ -493,28 +498,43 @@ private fun MarkdownListBlock(
                     val itemSpacing = if (block.tight) tightItemSpacing else looseItemSpacing
                     if (itemSpacing > 0.dp) Spacer(Modifier.height(itemSpacing))
                 }
-                MarkerContentRow(Modifier.fillMaxWidth()) { markerModifier, contentModifier ->
+                WholeCellContentMarkerRow(
+                    minimumMarkerRegionWidth = minimumMarkerRegionWidth,
+                    contentCellWidthPx = coreMarkerTextStyle.fontSize,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { markerModifier, contentModifier ->
                     val marker = markers[index]
                     val ordinalMarker = block.ordered && marker is MarkdownListMarker.Text
-                    Spacer(Modifier.width(markerLeadingSpace))
                     when (marker) {
-                        is MarkdownListMarker.Text -> CjkText(
-                            text = marker.value,
-                            modifier = markerModifier.width(markerWidth),
-                            style = style.body,
-                            paragraphStyle = if (ordinalMarker) {
-                                markerEndParagraphStyle
-                            } else {
-                                markerStartParagraphStyle
-                            },
-                            measurer = markerMeasurer,
-                        )
-                        is MarkdownListMarker.Task -> MarkdownTaskListMarker(
-                            checked = marker.checked,
-                            modifier = markerModifier.width(markerWidth),
-                            referenceLayout = markerReferenceLayout,
-                            fontSize = coreMarkerTextStyle.fontSize,
-                        )
+                        is MarkdownListMarker.Text -> if (ordinalMarker) {
+                            CjkText(
+                                text = marker.value,
+                                modifier = markerModifier,
+                                style = style.body,
+                                paragraphStyle = markerEndParagraphStyle,
+                                measurer = markerMeasurer,
+                            )
+                        } else {
+                            Row(markerModifier) {
+                                Spacer(Modifier.width(markerLeadingSpace))
+                                CjkText(
+                                    text = marker.value,
+                                    modifier = Modifier.width(markerWidth),
+                                    style = style.body,
+                                    paragraphStyle = markerStartParagraphStyle,
+                                    measurer = markerMeasurer,
+                                )
+                            }
+                        }
+                        is MarkdownListMarker.Task -> Row(markerModifier) {
+                            Spacer(Modifier.width(markerLeadingSpace))
+                            MarkdownTaskListMarker(
+                                checked = marker.checked,
+                                modifier = Modifier.width(markerWidth),
+                                referenceLayout = markerReferenceLayout,
+                                fontSize = coreMarkerTextStyle.fontSize,
+                            )
+                        }
                     }
                     MarkdownBlocks(
                         blocks = item.blocks,
@@ -532,28 +552,90 @@ private fun MarkdownListBlock(
     }
 }
 
-/** Default geometry for list-like rows: the marker aligns to the content's first baseline. */
-@Composable
-private fun MarkerContentRow(
-    modifier: Modifier = Modifier,
-    content: @Composable RowScope.(markerModifier: Modifier, contentModifier: Modifier) -> Unit,
-) {
-    Row(modifier) {
-        content(
-            Modifier.alignByBaseline(),
-            Modifier.weight(1f).alignByBaseline(),
-        )
+internal data class WholeCellListGeometry(
+    val markerRegionWidthPx: Int,
+    val contentWidthPx: Int,
+)
+
+/**
+ * Fits an integral number of content cells after the marker's measured width.
+ * The marker itself is never character-cell rounded. Instead its layout region
+ * absorbs the sub-cell remainder, so marker region + right-aligned content box
+ * exactly equals the body measure.
+ */
+internal fun wholeCellListGeometryPx(
+    bodyMeasurePx: Int,
+    minimumMarkerRegionWidthPx: Int,
+    contentCellWidthPx: Float,
+): WholeCellListGeometry {
+    val minimumMarkerWidth = minimumMarkerRegionWidthPx
+        .coerceIn(0, bodyMeasurePx.coerceAtLeast(0))
+    val available = (bodyMeasurePx - minimumMarkerWidth).coerceAtLeast(0)
+    if (available == 0 || !contentCellWidthPx.isFinite() || contentCellWidthPx <= 0f) {
+        return WholeCellListGeometry(bodyMeasurePx, available)
     }
+    val cells = floor(available / contentCellWidthPx).toInt()
+    val contentWidthPx = if (cells < 1) {
+        available
+    } else {
+        floor(cells * contentCellWidthPx).toInt().coerceIn(1, available)
+    }
+    return WholeCellListGeometry(
+        markerRegionWidthPx = bodyMeasurePx - contentWidthPx,
+        contentWidthPx = contentWidthPx,
+    )
 }
 
-/** Integral character-cell width shared by ordered-list and footnote markers. */
-internal fun wholeCellMarkerGutter(
-    widestMarker: Float,
-    fontSize: Float,
-) = ceil(widestMarker.coerceAtLeast(0f) / fontSize)
-    .toInt()
-    .coerceAtLeast(1)
-    .ic
+/** Marker/content row whose content box stays on its own whole-cell grid. */
+@Composable
+private fun WholeCellContentMarkerRow(
+    minimumMarkerRegionWidth: Dp,
+    contentCellWidthPx: Float,
+    modifier: Modifier = Modifier,
+    content: @Composable (markerModifier: Modifier, contentModifier: Modifier) -> Unit,
+) {
+    val density = LocalDensity.current
+    val minimumMarkerRegionWidthPx = with(density) { minimumMarkerRegionWidth.roundToPx() }
+    Layout(
+        modifier = modifier,
+        content = { content(Modifier, Modifier) },
+    ) { measurables, constraints ->
+        require(measurables.size == 2) { "WholeCellContentMarkerRow requires marker and content" }
+        val rowWidth = if (constraints.hasBoundedWidth) constraints.maxWidth else constraints.minWidth
+        val geometry = wholeCellListGeometryPx(
+            bodyMeasurePx = rowWidth,
+            minimumMarkerRegionWidthPx = minimumMarkerRegionWidthPx,
+            contentCellWidthPx = contentCellWidthPx,
+        )
+        val fixedMarkerWidth = geometry.markerRegionWidthPx
+        val contentWidth = geometry.contentWidthPx
+        val markerPlaceable = measurables[0].measure(
+            constraints.copy(minWidth = fixedMarkerWidth, maxWidth = fixedMarkerWidth, minHeight = 0),
+        )
+        val contentPlaceable = measurables[1].measure(
+            constraints.copy(minWidth = contentWidth, maxWidth = contentWidth, minHeight = 0),
+        )
+        fun baselineOf(placeable: androidx.compose.ui.layout.Placeable): Int =
+            placeable[FirstBaseline].takeUnless { it == AlignmentLine.Unspecified } ?: 0
+        val markerBaseline = baselineOf(markerPlaceable)
+        val contentBaseline = baselineOf(contentPlaceable)
+        val rowBaseline = maxOf(markerBaseline, contentBaseline)
+        val rowHeight = (
+            rowBaseline + maxOf(
+                markerPlaceable.height - markerBaseline,
+                contentPlaceable.height - contentBaseline,
+            )
+        ).coerceIn(constraints.minHeight, constraints.maxHeight)
+        layout(
+            width = rowWidth,
+            height = rowHeight,
+            alignmentLines = mapOf(FirstBaseline to rowBaseline),
+        ) {
+            markerPlaceable.placeRelative(0, rowBaseline - markerBaseline)
+            contentPlaceable.placeRelative(rowWidth - contentWidth, rowBaseline - contentBaseline)
+        }
+    }
+}
 
 @Composable
 private fun MarkdownTaskListMarker(
@@ -745,8 +827,11 @@ private fun MarkdownTextBlock(
 @Composable
 fun DefaultMarkdownCodeBlock(block: MarkdownCodeBlock, style: MarkdownStyle) {
     val codeHighlighter = LocalMarkdownCodeHighlighter.current
-    val highlights = remember(block.code, block.language, block.highlights, codeHighlighter) {
-        block.highlights.ifEmpty { codeHighlighter.highlight(block.code, block.language) }
+    val codeLanguage = remember(block.language) { resolveMarkdownCodeLanguage(block.language) }
+    val highlights = remember(block.code, codeLanguage, block.highlights, codeHighlighter) {
+        block.highlights.ifEmpty {
+            codeHighlighter.highlight(block.code, codeLanguage?.tokenizerLabel)
+        }
     }
     val highlightedCode = remember(block.code, highlights, style.codeHighlight) {
         buildAnnotatedString {
@@ -760,10 +845,7 @@ fun DefaultMarkdownCodeBlock(block: MarkdownCodeBlock, style: MarkdownStyle) {
     }
     val lineCount = remember(block.code) { block.code.count { it == '\n' } + 1 }
     val lineNumbers = remember(lineCount) { (1..lineCount).joinToString("\n") }
-    val language = block.language
-        ?.trim()
-        ?.takeIf { it.isNotEmpty() }
-        ?.uppercase()
+    val language = codeLanguage?.displayLabel
     val fileName = block.fileName?.takeIf { it.isNotBlank() }
     @Suppress("DEPRECATION")
     val clipboardManager = LocalClipboardManager.current
@@ -882,7 +964,6 @@ fun DefaultMarkdownImageBlock(
     inlineSlots: MarkdownInlineSlots = DefaultMarkdownInlineSlots,
 ) {
     val label = block.description.ifBlank { block.destination }
-    val captionHorizontalIndent = style.captionHorizontalIndentDp()
     val imageContent = markdownImageContent(block)
     val viewerState = currentMarkdownImageViewerState()
     val imageGallery = currentMarkdownImageGallery()
@@ -904,6 +985,15 @@ fun DefaultMarkdownImageBlock(
                 onLinkClick = onLinkClick,
                 onFootnoteClick = null,
             )
+            block.caption?.let { caption ->
+                DefaultMarkdownFigureCaption(
+                    caption = caption,
+                    style = style,
+                    inlineSlots = inlineSlots,
+                    onLinkClick = onLinkClick,
+                    onFootnoteClick = null,
+                )
+            }
         } else {
             BoxWithConstraints(
                 modifier = Modifier.fillMaxWidth(),
@@ -918,34 +1008,41 @@ fun DefaultMarkdownImageBlock(
                     null
                 }
                 val imageWidth = widthHint?.dp?.coerceAtMost(maxWidth) ?: maxWidth
+                val captionWidth = maxOf(imageWidth, style.figureCaptionMinimumWidthDp())
+                    .coerceAtMost(maxWidth)
+                val imageShape = RoundedCornerShape(style.imageCornerRadius)
                 val imageModifier = Modifier
                     .width(imageWidth)
                     .then(if (ratio != null && ratio > 0f) Modifier.aspectRatio(ratio) else Modifier)
-                    .clip(RoundedCornerShape(style.imageCornerRadius))
+                    .border(style.imageOutlineWidth, style.imageOutlineColor, imageShape)
+                    .clip(imageShape)
                     .openMarkdownImageOnClick(viewerState, block, imageGallery)
-                Box(imageModifier, contentAlignment = Alignment.Center) {
-                    imageContent.content(Modifier.fillMaxSize())
-                    if (imageContent.loadState == MarkdownImageLoadState.Loading) {
-                        androidx.compose.material3.CircularProgressIndicator(
-                            progress = { imageContent.progress ?: 0f },
-                            modifier = Modifier.size(24.dp),
-                            strokeWidth = 2.dp,
+                Column(
+                    modifier = Modifier.width(captionWidth),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Box(imageModifier, contentAlignment = Alignment.Center) {
+                        imageContent.content(Modifier.fillMaxSize())
+                        if (imageContent.loadState == MarkdownImageLoadState.Loading) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                progress = { imageContent.progress ?: 0f },
+                                modifier = Modifier.size(24.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        }
+                    }
+                    block.caption?.let { caption ->
+                        DefaultMarkdownFigureCaption(
+                            caption = caption,
+                            style = style,
+                            modifier = Modifier.fillMaxWidth(),
+                            inlineSlots = inlineSlots,
+                            onLinkClick = onLinkClick,
+                            onFootnoteClick = null,
                         )
                     }
                 }
             }
-        }
-        block.caption?.let { caption ->
-            Spacer(Modifier.height(style.captionSpacing()))
-            MarkdownTextBlock(
-                text = caption,
-                textStyle = style.caption,
-                markdownStyle = style,
-                inlineSlots = inlineSlots,
-                onLinkClick = onLinkClick,
-                onFootnoteClick = null,
-                modifier = Modifier.padding(horizontal = captionHorizontalIndent),
-            )
         }
     }
 }
@@ -965,7 +1062,6 @@ fun DefaultMarkdownTable(
 ) {
     val density = LocalDensity.current
     val tableMeasurer = rememberParagraphMeasurer()
-    val captionHorizontalIndent = style.captionHorizontalIndentDp()
     val borderWidthPx = with(density) { style.tableBorderWidth.toPx() }
     val columnCount = maxOf(
         block.columnAlignments.size,
@@ -973,14 +1069,12 @@ fun DefaultMarkdownTable(
     )
     if (columnCount == 0) {
         block.caption?.let { caption ->
-            MarkdownTextBlock(
-                text = caption,
-                textStyle = style.caption,
-                markdownStyle = style,
+            DefaultMarkdownCaption(
+                caption = caption,
+                style = style,
                 inlineSlots = inlineSlots,
                 onLinkClick = onLinkClick,
                 onFootnoteClick = onFootnoteClick,
-                modifier = Modifier.padding(horizontal = captionHorizontalIndent),
             )
         }
         return
@@ -1065,14 +1159,12 @@ fun DefaultMarkdownTable(
                         .align(Alignment.TopCenter),
                 ) {
                     block.caption?.let { caption ->
-                        MarkdownTextBlock(
-                            text = caption,
-                            textStyle = style.caption,
-                            markdownStyle = style,
+                        DefaultMarkdownCaption(
+                            caption = caption,
+                            style = style,
                             inlineSlots = inlineSlots,
                             onLinkClick = onLinkClick,
                             onFootnoteClick = onFootnoteClick,
-                            modifier = Modifier.padding(horizontal = captionHorizontalIndent),
                         )
                         Spacer(Modifier.height(style.captionSpacing()))
                     }
@@ -1220,17 +1312,19 @@ fun DefaultMarkdownFootnoteDefinition(
             textStyle = coreMarkerTextStyle,
             paragraphStyle = markerParagraphStyle,
         ).size.width
-        val gutter = wholeCellMarkerGutter(measuredWidth, coreMarkerTextStyle.fontSize)
-        with(density) { gutter.toPx(coreMarkerTextStyle.fontSize).toDp() }
+        with(density) { measuredWidth.toDp() }
     }
-    MarkerContentRow(
-        Modifier
+    val resolvedMarkerWidth = markerWidth ?: singleMarkerWidth
+    WholeCellContentMarkerRow(
+        minimumMarkerRegionWidth = resolvedMarkerWidth,
+        contentCellWidthPx = coreMarkerTextStyle.fontSize,
+        modifier = Modifier
             .fillMaxWidth()
             .bringIntoViewRequester(bringIntoViewRequester),
     ) { markerModifier, contentModifier ->
         CjkText(
             text = "[${block.index}]",
-            modifier = markerModifier.width(markerWidth ?: singleMarkerWidth),
+            modifier = markerModifier,
             style = footnoteStyle.body,
             paragraphStyle = markerParagraphStyle,
             measurer = markerMeasurer,
@@ -1257,6 +1351,54 @@ private fun MarkdownStyle.captionSpacing() = bodyLineHeightSpOrNull()?.let { lin
 private fun MarkdownStyle.captionHorizontalIndentDp() = with(LocalDensity.current) {
     val bodyFontSizePx = body.toCjkTextStyle().toCoreTextStyle(this).fontSize
     captionHorizontalIndent.toPx(bodyFontSizePx).toDp()
+}
+
+@Composable
+private fun MarkdownStyle.figureCaptionMinimumWidthDp() = with(LocalDensity.current) {
+    val bodyFontSizePx = body.toCjkTextStyle().toCoreTextStyle(this).fontSize
+    figureCaptionMinimumWidth.toPx(bodyFontSizePx).toDp()
+}
+
+/** Shared caption presentation for host-owned figures and the built-in image/table renderers. */
+@Composable
+fun DefaultMarkdownCaption(
+    caption: MarkdownText,
+    style: MarkdownStyle,
+    modifier: Modifier = Modifier,
+    inlineSlots: MarkdownInlineSlots = DefaultMarkdownInlineSlots,
+    onLinkClick: ((String) -> Unit)? = null,
+    onFootnoteClick: ((String) -> Unit)? = null,
+) {
+    MarkdownTextBlock(
+        text = caption,
+        textStyle = style.caption,
+        markdownStyle = style,
+        inlineSlots = inlineSlots,
+        onLinkClick = onLinkClick,
+        onFootnoteClick = onFootnoteClick,
+        modifier = modifier.padding(horizontal = style.captionHorizontalIndentDp()),
+    )
+}
+
+/** Shared figure-caption rhythm for host-owned images and the built-in image renderer. */
+@Composable
+fun DefaultMarkdownFigureCaption(
+    caption: MarkdownText,
+    style: MarkdownStyle,
+    modifier: Modifier = Modifier,
+    inlineSlots: MarkdownInlineSlots = DefaultMarkdownInlineSlots,
+    onLinkClick: ((String) -> Unit)? = null,
+    onFootnoteClick: ((String) -> Unit)? = null,
+) {
+    Spacer(Modifier.height(style.captionSpacing()))
+    DefaultMarkdownCaption(
+        caption = caption,
+        style = style,
+        modifier = modifier,
+        inlineSlots = inlineSlots,
+        onLinkClick = onLinkClick,
+        onFootnoteClick = onFootnoteClick,
+    )
 }
 
 @Composable

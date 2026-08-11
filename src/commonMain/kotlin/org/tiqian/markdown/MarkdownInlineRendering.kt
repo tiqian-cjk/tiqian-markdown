@@ -30,6 +30,8 @@ import org.tiqian.compose.CjkInlineBackgroundDrawStyle
 import org.tiqian.compose.CjkInlineBackgroundMetricPolicy
 import org.tiqian.compose.CjkInlineDecoration
 import org.tiqian.compose.CjkInlineDecorationStyle
+import org.tiqian.compose.addCjkInlineAttachment
+import org.tiqian.core.InlineAttachment
 
 /** Compose-facing extension points for inline objects and host-defined inline semantics. */
 class MarkdownInlineSlots(
@@ -489,6 +491,7 @@ private fun buildResolvedMarkdownText(
                 }
 
                 is MarkdownTextMark.Footnote -> {
+                    addCjkInlineAttachment(InlineAttachment.Previous, start, end)
                     addStyle(
                         style.footnoteReference.merge(
                             SpanStyle(baselineShift = BaselineShift.Superscript),

@@ -96,6 +96,10 @@ class MarkdownAnnotatedStringTest {
             },
         )
         assertTrue(annotated.getLinkAnnotations(4, 7).single().item is LinkAnnotation.Clickable)
+        val attachment = annotated.getStringAnnotations(4, 7).single()
+        assertEquals("Previous", attachment.item)
+        assertEquals(4, attachment.start)
+        assertEquals(7, attachment.end)
     }
 
     @Test

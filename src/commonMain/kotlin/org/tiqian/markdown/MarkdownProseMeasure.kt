@@ -12,15 +12,11 @@ internal fun resolveMarkdownProseMeasureCells(
     policy: MarkdownProseMeasure,
 ): Float {
     require(availableCells.isFinite() && availableCells >= 0f)
-    if (availableCells < 1f) return availableCells
+    if (availableCells <= policy.fluidStart.count) return availableCells
 
-    val target = if (availableCells <= policy.fluidStart.count) {
-        availableCells
-    } else {
-        (
-            policy.fluidStart.count +
-                policy.growthPerDoubling.count * log2(availableCells / policy.fluidStart.count)
-            ).coerceAtMost(policy.maximum.count)
-    }
+    val target = (
+        policy.fluidStart.count +
+            policy.growthPerDoubling.count * log2(availableCells / policy.fluidStart.count)
+        ).coerceAtMost(policy.maximum.count)
     return floor(target).coerceAtLeast(1f)
 }

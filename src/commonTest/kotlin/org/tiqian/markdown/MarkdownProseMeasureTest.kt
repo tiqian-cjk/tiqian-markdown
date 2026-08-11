@@ -7,8 +7,9 @@ class MarkdownProseMeasureTest {
     private val policy = MarkdownProseMeasure()
 
     @Test
-    fun narrowMeasureUsesAvailableIntegralCells() {
-        assertEquals(20f, resolveMarkdownProseMeasureCells(20.75f, policy))
+    fun narrowMeasureUsesTheWholeAvailableWidth() {
+        assertEquals(16.7f, resolveMarkdownProseMeasureCells(16.7f, policy))
+        assertEquals(20.75f, resolveMarkdownProseMeasureCells(20.75f, policy))
         assertEquals(32f, resolveMarkdownProseMeasureCells(32f, policy))
     }
 

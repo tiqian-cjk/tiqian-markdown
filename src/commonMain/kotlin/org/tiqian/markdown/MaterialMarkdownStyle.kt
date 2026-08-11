@@ -6,6 +6,7 @@ import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 
 /**
  * Resolves [MarkdownPalette.Platform] from the current Material 3 theme.
@@ -52,35 +53,57 @@ internal fun MarkdownStyle.mapMaterial3(
         ),
         keyboardInputBorderColor = colorScheme.outline,
         footnoteReference = footnoteReference.copy(color = colorScheme.primary),
-        footnote = footnote.copy(color = colorScheme.onSurfaceVariant),
+        footnote = footnote.copy(color = colorScheme.outline),
         quoteBarColor = colorScheme.outlineVariant,
         quoteText = quoteText.copy(color = colorScheme.onSurfaceVariant),
         codeBackground = colorScheme.surfaceContainer,
         codeMetaBackground = colorScheme.surfaceContainerHigh,
-        codeLineNumberColor = colorScheme.onSurfaceVariant,
+        codeLineNumberColor = colorScheme.outline,
         codeHighlight = codeHighlight.copy(
-            comment = codeHighlight.comment.copy(color = colorScheme.onSurfaceVariant),
-            keyword = codeHighlight.keyword.copy(color = colorScheme.primary),
+            comment = codeHighlight.comment.copy(color = colorScheme.outline),
+            keyword = codeHighlight.keyword.copy(
+                color = colorScheme.primary,
+                fontWeight = FontWeight.Medium,
+            ),
             string = codeHighlight.string.copy(color = colorScheme.tertiary),
-            number = codeHighlight.number.copy(color = colorScheme.secondary),
-            type = codeHighlight.type.copy(color = colorScheme.tertiary),
-            function = codeHighlight.function.copy(color = colorScheme.primary),
+            number = codeHighlight.number.copy(
+                color = colorScheme.secondary,
+                fontWeight = FontWeight.Medium,
+            ),
+            type = codeHighlight.type.copy(
+                color = colorScheme.tertiary,
+                fontWeight = FontWeight.Medium,
+            ),
+            function = codeHighlight.function.copy(color = colorScheme.secondary),
             property = codeHighlight.property.copy(color = colorScheme.secondary),
-            annotation = codeHighlight.annotation.copy(color = colorScheme.tertiary),
+            annotation = codeHighlight.annotation.copy(
+                color = colorScheme.tertiary,
+                fontWeight = FontWeight.Medium,
+            ),
             variable = codeHighlight.variable.copy(color = colorScheme.onSurface),
-            operator = codeHighlight.operator.copy(color = colorScheme.onSurface),
-            punctuation = codeHighlight.punctuation.copy(color = colorScheme.onSurface),
-            tag = codeHighlight.tag.copy(color = colorScheme.tertiary),
+            operator = codeHighlight.operator.copy(color = colorScheme.onSurfaceVariant),
+            punctuation = codeHighlight.punctuation.copy(color = colorScheme.onSurfaceVariant),
+            tag = codeHighlight.tag.copy(
+                color = colorScheme.primary,
+                fontWeight = FontWeight.Medium,
+            ),
             attribute = codeHighlight.attribute.copy(color = colorScheme.secondary),
-            constant = codeHighlight.constant.copy(color = colorScheme.secondary),
-            escape = codeHighlight.escape.copy(color = colorScheme.primary),
+            constant = codeHighlight.constant.copy(
+                color = colorScheme.secondary,
+                fontWeight = FontWeight.Medium,
+            ),
+            escape = codeHighlight.escape.copy(
+                color = colorScheme.primary,
+                fontWeight = FontWeight.Medium,
+            ),
             markup = codeHighlight.markup.copy(color = colorScheme.onSurface),
         ),
         mathBackground = Color.Unspecified,
         tableBorderColor = colorScheme.outlineVariant,
         tableHeaderBackground = colorScheme.surfaceContainerLow,
         tableText = tableText.copy(color = colorScheme.onSurface),
-        caption = caption.copy(color = colorScheme.onSurfaceVariant),
+        imageOutlineColor = colorScheme.outline.copy(alpha = 0.15f),
+        caption = caption.copy(color = colorScheme.outline),
         thematicBreakColor = colorScheme.outlineVariant,
     )
 }

@@ -72,8 +72,11 @@ class MarkdownListAlignmentTest {
             width = 300,
         )
 
-        val firstLineStart = pixels.inkMinX(24 until 120, yRange = 0 until 36)
-        val secondLineStart = pixels.inkMinX(24 until 120, yRange = 36 until 72)
+        // 300 px minus the measured marker leaves a half-cell remainder;
+        // the marker region absorbs it, so the content column starts at 36 px.
+        // Exclude the right-aligned ordinal ink immediately before that edge.
+        val firstLineStart = pixels.inkMinX(36 until 120, yRange = 0 until 36)
+        val secondLineStart = pixels.inkMinX(36 until 120, yRange = 36 until 72)
 
         assertEquals(firstLineStart, secondLineStart)
     }

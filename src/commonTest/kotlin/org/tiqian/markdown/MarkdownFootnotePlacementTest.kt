@@ -6,7 +6,7 @@ import kotlin.test.assertIs
 
 class MarkdownFootnotePlacementTest {
     @Test
-    fun paragraphPlacementUsesFirstReferenceOrderAndEmitsEachDefinitionOnce() {
+    fun blockPlacementUsesFirstReferenceOrderAndEmitsEachDefinitionOnce() {
         val document = MarkdownRenderDocument(
             blocks = listOf(
                 paragraph("甲", "b", "a"),
@@ -17,7 +17,7 @@ class MarkdownFootnotePlacementTest {
             ),
         )
 
-        val placed = document.placeFootnotes(MarkdownFootnotePlacement.AfterParagraph)
+        val placed = document.placeFootnotes(MarkdownFootnotePlacement.AfterBlock)
 
         assertEquals(
             listOf("paragraph", "b", "a", "paragraph", "unused"),
@@ -26,7 +26,7 @@ class MarkdownFootnotePlacementTest {
     }
 
     @Test
-    fun paragraphPlacementWorksInsideListItems() {
+    fun blockPlacementKeepsListItemFootnotesOutsideTheList() {
         val list = MarkdownList(
             ordered = false,
             startNumber = 1,
@@ -41,11 +41,37 @@ class MarkdownFootnotePlacementTest {
         )
         val placed = MarkdownRenderDocument(
             blocks = listOf(list, definition("note", 1)),
-        ).placeFootnotes(MarkdownFootnotePlacement.AfterParagraph)
+        ).placeFootnotes(MarkdownFootnotePlacement.AfterBlock)
 
-        val placedList = assertIs<MarkdownList>(placed.single())
-        assertIs<MarkdownParagraph>(placedList.items.single().blocks[0])
-        assertEquals("note", assertIs<MarkdownFootnoteDefinition>(placedList.items.single().blocks[1]).label)
+        val placedList = assertIs<MarkdownList>(placed[0])
+        assertEquals(1, placedList.items.single().blocks.size)
+        assertIs<MarkdownParagraph>(placedList.items.single().blocks.single())
+        assertEquals("note", assertIs<MarkdownFootnoteDefinition>(placed[1]).label)
+    }
+
+    @Test
+    fun blockPlacementKeepsQuoteFootnotesOutsideTheQuote() {
+        val quote = MarkdownBlockQuote(
+            blocks = listOf(
+                paragraph("引文甲", "first"),
+                paragraph("引文乙", "second"),
+            ),
+            metadata = metadata(1),
+        )
+        val placed = MarkdownRenderDocument(
+            blocks = listOf(
+                quote,
+                paragraph("后文"),
+                definition("first", 1),
+                definition("second", 2),
+            ),
+        ).placeFootnotes(MarkdownFootnotePlacement.AfterBlock)
+
+        val placedQuote = assertIs<MarkdownBlockQuote>(placed[0])
+        assertEquals(2, placedQuote.blocks.size)
+        assertEquals("first", assertIs<MarkdownFootnoteDefinition>(placed[1]).label)
+        assertEquals("second", assertIs<MarkdownFootnoteDefinition>(placed[2]).label)
+        assertIs<MarkdownParagraph>(placed[3])
     }
 
     @Test

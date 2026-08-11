@@ -28,6 +28,7 @@ import org.tiqian.markdown.MarkdownThematicBreak
 import org.tiqian.markdown.MarkdownUnsupportedBlock
 
 internal object PreviewDocuments {
+    val footnoteAttachment: MarkdownRenderDocument = PreviewDocumentBuilder().buildFootnoteAttachment()
     val fullArticle: MarkdownRenderDocument = PreviewDocumentBuilder().buildFullArticle()
     val headings: MarkdownRenderDocument = PreviewDocumentBuilder().buildHeadings()
     val inlineStyles: MarkdownRenderDocument = PreviewDocumentBuilder().buildInlineStyles()
@@ -38,6 +39,20 @@ internal object PreviewDocuments {
 
 private class PreviewDocumentBuilder {
     private var nextKey = 0
+
+    fun buildFootnoteAttachment(): MarkdownRenderDocument = MarkdownRenderDocument(
+        blocks = listOf(
+            paragraph(
+                markedText(
+                    segment("清晨的会议准时开始，桌上的材料已经整理完毕。"),
+                    segment("[1]", MarkdownTextMark.Footnote("attachment-one", 1)),
+                    segment("工作人员依次确认了当天的安排，并把需要补充的内容记录下来。主持人最后说：“相关材料将在下午送达。”"),
+                    segment("[2]", MarkdownTextMark.Footnote("attachment-two", 2)),
+                    segment("，随后大家继续讨论下一项议程，直到所有事项都有了明确的处理方式。"),
+                ),
+            ),
+        ),
+    )
 
     fun buildFullArticle(): MarkdownRenderDocument {
         val footnoteText = markedText(
