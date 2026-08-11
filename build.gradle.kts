@@ -3,6 +3,7 @@ import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.jvm.tasks.Jar
 import org.gradle.plugins.signing.SigningExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     kotlin("multiplatform") version "2.3.20"
@@ -18,7 +19,19 @@ version = providers.gradleProperty("tiqianVersion")
     .orElse(providers.environmentVariable("TIQIAN_VERSION"))
     .getOrElse("0.1.0-SNAPSHOT")
 
-val tiqianSuiteVersion = version.toString()
+val tiqianDependencyVersion = providers.gradleProperty("tiqianDependencyVersion")
+    .orElse(providers.environmentVariable("TIQIAN_DEPENDENCY_VERSION"))
+    .orNull
+    ?: rootProject.file(".tiqian-local.properties")
+        .takeIf { it.isFile }
+        ?.inputStream()
+        ?.use { input ->
+            Properties().apply { load(input) }.getProperty("version")?.trim()
+        }
+        ?.takeIf { it.isNotEmpty() }
+    ?: providers.gradleProperty("tiqianVersion")
+        .orElse(providers.environmentVariable("TIQIAN_VERSION"))
+        .getOrElse("0.1.0-SNAPSHOT")
 
 kotlin {
     jvmToolchain(25)
@@ -30,7 +43,7 @@ kotlin {
     }
 
     android {
-        namespace = "org.tiqian.markdown"
+        namespace = "org.tiqian.markdown.compose"
         compileSdk = 37
         minSdk = 27
         androidResources.enable = true
@@ -41,15 +54,15 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            api("org.tiqian:tiqian-compose:$tiqianSuiteVersion")
+            api("org.tiqian:tiqian-compose:$tiqianDependencyVersion")
             api(compose.runtime)
             api(compose.ui)
             api(compose.components.resources)
             implementation(compose.foundation)
             implementation(compose.material3)
             implementation("org.jetbrains.compose.ui:ui-backhandler:1.11.1")
-            implementation("org.tiqian.math:math-compose:$tiqianSuiteVersion")
-            implementation("org.tiqian:tiqian-font:$tiqianSuiteVersion")
+            implementation("org.tiqian:math-compose:$tiqianDependencyVersion")
+            implementation("org.tiqian:tiqian-font:$tiqianDependencyVersion")
             implementation("com.gallatinapps.syntaxmp:syntaxmp-tokenizer:0.3.0")
         }
 
@@ -60,11 +73,11 @@ kotlin {
 
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
-            implementation("org.tiqian:tiqian-shaping-skia:$tiqianSuiteVersion")
+            implementation("org.tiqian:tiqian-shaping-skia:$tiqianDependencyVersion")
         }
 
         androidMain.dependencies {
-            implementation("org.tiqian:tiqian-shaping-native-font:$tiqianSuiteVersion")
+            implementation("org.tiqian:tiqian-shaping-android-native-font:$tiqianDependencyVersion")
             implementation("androidx.core:core-ktx:1.19.0")
         }
 
@@ -78,7 +91,7 @@ kotlin {
 }
 
 compose.resources {
-    packageOfResClass = "org.tiqian.markdown.generated.resources"
+    packageOfResClass = "org.tiqian.markdown.compose.generated.resources"
 }
 
 val javadocJar = tasks.register<Jar>("javadocJar") {

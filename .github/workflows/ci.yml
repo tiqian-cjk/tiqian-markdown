@@ -62,13 +62,7 @@ jobs:
           echo "$cmake_bin_dir" >> "$GITHUB_PATH"
           "$cmake_bin_dir/cmake" --version
 
-      - name: Test JVM and compile Android
-        env:
-          TIQIAN_CHECKOUT: Tiqian
-          TIQIAN_MATH_CHECKOUT: tiqian-math
-        run: ./gradlew jvmTest compileAndroidMain :preview:compileKotlinJvm
-
-      - name: Verify pure Maven consumption
+      - name: Test through isolated Maven repository
         env:
           TIQIAN_CHECKOUT: Tiqian
           TIQIAN_MATH_CHECKOUT: tiqian-math

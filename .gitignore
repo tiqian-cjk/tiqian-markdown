@@ -4,5 +4,6 @@
 __pycache__/
 build/
 local.properties
+.tiqian-local.properties
 *.iml
 gradle/gradle-daemon-jvm.properties

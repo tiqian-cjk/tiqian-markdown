@@ -10,6 +10,11 @@ The module has no parser dependency. Its render model contains no Compose or par
 semantics, and explicit capability issues so unsupported syntax is observable rather than silently
 dropped.
 
+The platform-neutral model and highlighter contracts live in `org.tiqian.markdown`. Compose
+rendering, styles, slots, math hosting, and image-viewer APIs live in
+`org.tiqian.markdown.compose`. This package boundary is independent of the current single-artifact
+layout, so the model can later move to a separate core artifact without changing consumer imports.
+
 `TiqianMarkdown` owns neither scrolling nor network image loading. Hosts compose it into their own
 scroll container and may replace code, image, HTML, table, footnote, custom, thematic-break, or
 unsupported-block slots as needed. For the default image path, `MarkdownImageViewerHost` accepts a

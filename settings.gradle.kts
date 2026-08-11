@@ -1,3 +1,5 @@
+import java.util.Properties
+
 pluginManagement {
     repositories {
         google()
@@ -6,59 +8,52 @@ pluginManagement {
     }
 }
 
+val tiqianRepository = providers.gradleProperty("tiqianRepository")
+    .orElse(providers.environmentVariable("TIQIAN_REPOSITORY"))
+    .orNull
+val tiqianLocalConfig = rootDir.resolve(".tiqian-local.properties")
+val tiqianLocalVersion = tiqianLocalConfig.takeIf { it.isFile }
+    ?.inputStream()
+    ?.use { input ->
+        Properties().apply { load(input) }.getProperty("version")?.trim()
+    }
+    ?.takeIf { it.isNotEmpty() }
+
+if (tiqianLocalConfig.isFile && tiqianLocalVersion == null) {
+    error("${tiqianLocalConfig.name} must define a non-empty version")
+}
+if (tiqianLocalVersion != null && !tiqianLocalVersion.endsWith("-SNAPSHOT")) {
+    error("${tiqianLocalConfig.name} may only select a -SNAPSHOT version")
+}
+
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
     repositories {
         google()
+        if (tiqianRepository != null) {
+            maven {
+                name = "tiqianIntegration"
+                url = uri(tiqianRepository)
+                content {
+                    includeGroup("org.tiqian")
+                }
+            }
+        }
+        if (tiqianLocalVersion != null) {
+            mavenLocal {
+                name = "tiqianLocalSnapshots"
+                content {
+                    includeGroup("org.tiqian")
+                }
+                mavenContent {
+                    snapshotsOnly()
+                }
+            }
+        }
         mavenCentral()
-        mavenLocal()
     }
 }
 
 rootProject.name = "tiqian-markdown"
 
 include(":preview")
-
-// Android Studio's model importer cannot currently map Android-only modules from
-// the Tiqian composite builds (for example :shaping:native-font). During IDE
-// sync, resolve the same lockstep artifacts from Maven Local instead; normal
-// Gradle and CI builds keep source substitution enabled.
-val isIdeaSync = providers.systemProperty("idea.sync.active")
-    .map(String::toBoolean)
-    .getOrElse(false)
-val useLocalTiqianCheckouts = providers.gradleProperty("useLocalTiqianCheckouts")
-    .orElse(providers.environmentVariable("USE_LOCAL_TIQIAN_CHECKOUTS"))
-    .map(String::toBoolean)
-    .getOrElse(!isIdeaSync)
-
-val tiqianCheckout = providers.gradleProperty("tiqianCheckout").orNull
-    ?: System.getenv("TIQIAN_CHECKOUT")
-    ?: "../Tiqian"
-val tiqianSettings = file(tiqianCheckout).resolve("settings.gradle.kts")
-if (useLocalTiqianCheckouts && tiqianSettings.isFile) {
-    val composeProject = if (file(tiqianCheckout).resolve("frontend/compose").isDirectory) {
-        ":frontend:compose"
-    } else {
-        ":tiqian-compose"
-    }
-    includeBuild(tiqianCheckout) {
-        dependencySubstitution {
-            substitute(module("org.tiqian:tiqian-compose")).using(project(composeProject))
-            substitute(module("org.tiqian:tiqian-font")).using(project(":font"))
-            substitute(module("org.tiqian:tiqian-shaping-skia")).using(project(":shaping:skia"))
-            substitute(module("org.tiqian:tiqian-shaping-native-font")).using(project(":shaping:native-font"))
-        }
-    }
-}
-
-val mathCheckout = providers.gradleProperty("mathCheckout").orNull
-    ?: System.getenv("TIQIAN_MATH_CHECKOUT")
-    ?: "../tiqian-math"
-val mathSettings = file(mathCheckout).resolve("settings.gradle.kts")
-if (useLocalTiqianCheckouts && mathSettings.isFile) {
-    includeBuild(mathCheckout) {
-        dependencySubstitution {
-            substitute(module("org.tiqian.math:math-compose")).using(project(":frontend:math-compose"))
-        }
-    }
-}

@@ -85,7 +85,8 @@ jobs:
       - name: Upload Tiqian Markdown modules
         run: |
           ./gradlew publishAllPublicationsToCentralRepository \
-            -PuseLocalTiqianCheckouts=false \
+            -PtiqianDependencyVersion="$TIQIAN_VERSION" \
+            -PtiqianRepository="$PWD/build/maven-local-smoke/repository" \
             -Dmaven.repo.local="$PWD/build/maven-local-smoke/repository" \
             --no-daemon
 
