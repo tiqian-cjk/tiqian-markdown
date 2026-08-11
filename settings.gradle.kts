@@ -44,6 +44,9 @@ if (useLocalTiqianCheckouts && tiqianSettings.isFile) {
     includeBuild(tiqianCheckout) {
         dependencySubstitution {
             substitute(module("org.tiqian:tiqian-compose")).using(project(composeProject))
+            substitute(module("org.tiqian:tiqian-font")).using(project(":font"))
+            substitute(module("org.tiqian:tiqian-shaping-skia")).using(project(":shaping:skia"))
+            substitute(module("org.tiqian:tiqian-shaping-native-font")).using(project(":shaping:native-font"))
         }
     }
 }

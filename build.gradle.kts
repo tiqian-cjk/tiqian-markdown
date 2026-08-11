@@ -34,6 +34,9 @@ kotlin {
         compileSdk = 37
         minSdk = 27
         androidResources.enable = true
+        withDeviceTest {
+            instrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        }
     }
 
     sourceSets {
@@ -46,6 +49,7 @@ kotlin {
             implementation(compose.material3)
             implementation("org.jetbrains.compose.ui:ui-backhandler:1.11.1")
             implementation("org.tiqian.math:math-compose:$tiqianSuiteVersion")
+            implementation("org.tiqian:tiqian-font:$tiqianSuiteVersion")
             implementation("com.gallatinapps.syntaxmp:syntaxmp-tokenizer:0.3.0")
         }
 
@@ -56,6 +60,19 @@ kotlin {
 
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
+            implementation("org.tiqian:tiqian-shaping-skia:$tiqianSuiteVersion")
+        }
+
+        androidMain.dependencies {
+            implementation("org.tiqian:tiqian-shaping-native-font:$tiqianSuiteVersion")
+            implementation("androidx.core:core-ktx:1.19.0")
+        }
+
+        getByName("androidDeviceTest").dependencies {
+            implementation(kotlin("test"))
+            implementation("androidx.test:runner:1.7.0")
+            implementation("androidx.test:core:1.7.0")
+            implementation("androidx.test.ext:junit:1.3.0")
         }
     }
 }
