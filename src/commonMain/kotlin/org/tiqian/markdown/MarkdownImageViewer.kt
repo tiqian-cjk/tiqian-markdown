@@ -5,6 +5,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateDecay
+import androidx.compose.animation.core.animateTo
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.rememberSplineBasedDecay
@@ -19,11 +20,18 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.MutatePriority
+import androidx.compose.foundation.gestures.DragScope
+import androidx.compose.foundation.gestures.DraggableState
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.ScrollScope
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -58,7 +66,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.focus.FocusRequester
@@ -85,6 +92,7 @@ import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
@@ -105,12 +113,105 @@ import org.tiqian.markdown.generated.resources.next_image
 import org.tiqian.markdown.generated.resources.previous_image
 import kotlin.math.abs
 import kotlin.math.pow
-import kotlinx.coroutines.flow.distinctUntilChanged
 
 private const val DESKTOP_WHEEL_ZOOM_BASE = 1.12f
 private const val DESKTOP_KEYBOARD_ZOOM_FACTOR = 1.25f
 private const val MARKDOWN_IMAGE_VIEWER_FADE_DURATION_MILLIS = 180
 private val DESKTOP_KEYBOARD_PAN_DISTANCE = 48.dp
+
+private class MarkdownImagePagerGesture(initialPage: Int) {
+    var anchorPage: Int = initialPage
+    var dragDistancePx: Float = 0f
+}
+
+private class MarkdownImagePagerDragState(
+    private val state: PagerState,
+    private val onDragDelta: (Float) -> Unit,
+) : DraggableState {
+    override suspend fun drag(
+        dragPriority: MutatePriority,
+        block: suspend DragScope.() -> Unit,
+    ) {
+        state.scroll(dragPriority) {
+            val scrollScope = this
+            block(object : DragScope {
+                override fun dragBy(pixels: Float) {
+                    onDragDelta(pixels)
+                    scrollScope.scrollBy(-pixels)
+                }
+            })
+        }
+    }
+
+    override fun dispatchRawDelta(delta: Float) {
+        onDragDelta(delta)
+        state.dispatchRawDelta(-delta)
+    }
+}
+
+internal fun resolveMarkdownImagePagerTarget(
+    anchorPage: Int,
+    dragDistancePx: Float,
+    pointerVelocityPxPerSecond: Float,
+    minimumFlingVelocityPxPerSecond: Float,
+    pageSizePx: Int,
+    pageCount: Int,
+): Int {
+    if (pageCount <= 0) return 0
+    val direction = when {
+        abs(pointerVelocityPxPerSecond) >= minimumFlingVelocityPxPerSecond ->
+            if (pointerVelocityPxPerSecond < 0f) 1 else -1
+        pageSizePx > 0 && abs(dragDistancePx) >= pageSizePx * 0.5f ->
+            if (dragDistancePx < 0f) 1 else -1
+        else -> 0
+    }
+    return (anchorPage + direction).coerceIn(0, pageCount - 1)
+}
+
+private fun PagerState.distanceToStart(page: Int): Float {
+    val layout = layoutInfo
+    layout.visiblePagesInfo.firstOrNull { it.index == page }?.let { return it.offset.toFloat() }
+    val pageStep = layout.pageSize + layout.pageSpacing
+    val currentOffset = layout.visiblePagesInfo
+        .firstOrNull { it.index == currentPage }
+        ?.offset
+        ?: 0
+    return currentOffset + (page - currentPage) * pageStep.toFloat()
+}
+
+private suspend fun PagerState.settleToPageWithoutOvershoot(
+    page: Int,
+    initialScrollVelocity: Float,
+) {
+    scroll(MutatePriority.Default) {
+        val distance = distanceToStart(page)
+        var consumedDistance = 0f
+        AnimationState(initialValue = 0f, initialVelocity = initialScrollVelocity).animateTo(
+            targetValue = distance,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMediumLow,
+                visibilityThreshold = 1f,
+            ),
+        ) {
+            val boundedValue = value.coerceToTarget(distance)
+            val delta = boundedValue - consumedDistance
+            val consumed = scrollBy(delta)
+            consumedDistance += consumed
+            if (boundedValue != value || abs(delta - consumed) > 0.5f) {
+                cancelAnimation()
+            }
+        }
+        val remainder = distanceToStart(page)
+        if (abs(remainder) > 0.5f) scrollBy(remainder)
+    }
+}
+
+private fun Float.coerceToTarget(target: Float): Float = when {
+    target > 0f -> coerceAtMost(target)
+    target < 0f -> coerceAtLeast(target)
+    else -> 0f
+}
 
 /** The same 16-step smoothstep scrim used by Fog Island's image viewer. */
 private fun smoothMarkdownImageViewerScrimBrush(
@@ -135,6 +236,21 @@ private fun smoothMarkdownImageViewerScrimBrush(
     return Brush.verticalGradient(colorStops = colorStops)
 }
 
+internal fun markdownImageViewerScrimFlatFraction(
+    scrimHeightPx: Float,
+    systemBarHeightPx: Float,
+    topBarHeightPx: Float,
+): Float {
+    if (scrimHeightPx <= 0f) return 0.1f
+    val clampedSystemBarHeight = systemBarHeightPx.coerceIn(0f, scrimHeightPx)
+    val clampedTopBarHeight = topBarHeightPx.coerceIn(
+        minimumValue = 0f,
+        maximumValue = scrimHeightPx - clampedSystemBarHeight,
+    )
+    return ((clampedSystemBarHeight + clampedTopBarHeight * 0.1f) / scrimHeightPx)
+        .coerceIn(0f, 1f)
+}
+
 /** Loading information supplied by the host's image library. */
 enum class MarkdownImageLoadState {
     Loading,
@@ -155,6 +271,22 @@ class MarkdownImageContent(
 )
 
 typealias MarkdownImageProvider = @Composable (MarkdownImageBlock) -> MarkdownImageContent
+
+/** Pager persists item keys through Android Bundle, so expose the structural key as a String. */
+internal fun MarkdownNodeKey.imageViewerSaveableKey(): String = buildString {
+    append(parserStableKey)
+    append(':')
+    path.joinTo(this, separator = ".")
+}
+
+/** Where the viewer overlay is laid out relative to its host. */
+enum class MarkdownImageViewerPresentation {
+    /** The host itself already occupies the complete viewport. */
+    HostBounds,
+
+    /** Use a platform popup when Markdown is nested inside a scrolling article body. */
+    PlatformWindow,
+}
 
 @Stable
 class MarkdownImageViewerState internal constructor() {
@@ -221,6 +353,7 @@ fun MarkdownImageViewerHost(
     imageProvider: MarkdownImageProvider,
     modifier: Modifier = Modifier,
     state: MarkdownImageViewerState = rememberMarkdownImageViewerState(),
+    presentation: MarkdownImageViewerPresentation = MarkdownImageViewerPresentation.HostBounds,
     viewerActions: @Composable RowScope.(MarkdownImageBlock) -> Unit = {},
     content: @Composable BoxScope.() -> Unit,
 ) {
@@ -234,41 +367,83 @@ fun MarkdownImageViewerHost(
         if (state.isVisible) {
             BackHandler(onBack = state::dismiss)
         }
-        AnimatedContent(
-            targetState = state.activeSession,
-            modifier = Modifier.fillMaxSize().zIndex(1f),
-            transitionSpec = {
-                (fadeIn(
-                    animationSpec = tween(
-                        durationMillis = MARKDOWN_IMAGE_VIEWER_FADE_DURATION_MILLIS,
-                        easing = FastOutSlowInEasing,
-                    ),
-                ) togetherWith fadeOut(
-                    animationSpec = tween(
-                        durationMillis = MARKDOWN_IMAGE_VIEWER_FADE_DURATION_MILLIS,
-                        easing = FastOutSlowInEasing,
-                    ),
-                )) using null
-            },
-            contentKey = { it != null },
-        ) { session ->
-            if (session != null) {
-                MarkdownImageViewer(
-                    image = session.activeImage,
-                    images = session.images,
-                    imageProvider = imageProvider,
-                    onDismiss = state::dismiss,
-                    onImageChange = { image ->
-                        session.select(
-                            session.images.indexOfFirst { it.metadata.key == image.metadata.key },
-                        )
-                    },
-                    actions = viewerActions,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
+        when (presentation) {
+            MarkdownImageViewerPresentation.HostBounds -> MarkdownImageViewerHostBoundsOverlay(
+                state = state,
+                imageProvider = imageProvider,
+                viewerActions = viewerActions,
+            )
+
+            MarkdownImageViewerPresentation.PlatformWindow -> MarkdownImageViewerPlatformWindowOverlay(
+                state = state,
+                imageProvider = imageProvider,
+                viewerActions = viewerActions,
+            )
         }
     }
+}
+
+@Composable
+private fun MarkdownImageViewerHostBoundsOverlay(
+    state: MarkdownImageViewerState,
+    imageProvider: MarkdownImageProvider,
+    viewerActions: @Composable RowScope.(MarkdownImageBlock) -> Unit,
+) {
+    AnimatedContent(
+        targetState = state.activeSession,
+        modifier = Modifier.fillMaxSize().zIndex(1f),
+        transitionSpec = {
+            (fadeIn(
+                animationSpec = tween(
+                    durationMillis = MARKDOWN_IMAGE_VIEWER_FADE_DURATION_MILLIS,
+                    easing = FastOutSlowInEasing,
+                ),
+            ) togetherWith fadeOut(
+                animationSpec = tween(
+                    durationMillis = MARKDOWN_IMAGE_VIEWER_FADE_DURATION_MILLIS,
+                    easing = FastOutSlowInEasing,
+                ),
+            )) using null
+        },
+        contentKey = { it != null },
+    ) { session ->
+        if (session != null) {
+            MarkdownImageViewerSessionContent(session, imageProvider, state::dismiss, viewerActions)
+        }
+    }
+}
+
+@Composable
+private fun MarkdownImageViewerPlatformWindowOverlay(
+    state: MarkdownImageViewerState,
+    imageProvider: MarkdownImageProvider,
+    viewerActions: @Composable RowScope.(MarkdownImageBlock) -> Unit,
+) {
+    state.activeSession?.let { session ->
+        MarkdownImageViewerPlatformWindow(onDismissRequest = state::dismiss) {
+            MarkdownImageViewerSessionContent(session, imageProvider, state::dismiss, viewerActions)
+        }
+    }
+}
+
+@Composable
+private fun MarkdownImageViewerSessionContent(
+    session: MarkdownImageViewerSession,
+    imageProvider: MarkdownImageProvider,
+    onDismiss: () -> Unit,
+    viewerActions: @Composable RowScope.(MarkdownImageBlock) -> Unit,
+) {
+    MarkdownImageViewer(
+        image = session.activeImage,
+        images = session.images,
+        imageProvider = imageProvider,
+        onDismiss = onDismiss,
+        onImageChange = { image ->
+            session.select(session.images.indexOfFirst { it.metadata.key == image.metadata.key })
+        },
+        actions = viewerActions,
+        modifier = Modifier.fillMaxSize(),
+    )
 }
 
 @Composable
@@ -293,6 +468,13 @@ internal fun currentMarkdownImageViewerState(): MarkdownImageViewerState? =
 internal fun currentMarkdownImageGallery(): List<MarkdownImageBlock> =
     LocalMarkdownImageGallery.current
 
+/**
+ * Displays an image gallery starting at [image].
+ *
+ * Once composed, page movement is owned by the pager and reported through [onImageChange]. Treating
+ * those reports as commands to resynchronize the pager introduces a feedback race during consecutive
+ * swipes, so changing [image] does not move an already-open viewer.
+ */
 @Composable
 fun MarkdownImageViewer(
     image: MarkdownImageBlock,
@@ -311,41 +493,65 @@ fun MarkdownImageViewer(
     val initialPage = gallery.indexOfFirst { it.metadata.key == image.metadata.key }
         .coerceAtLeast(0)
     val pagerState = rememberPagerState(initialPage = initialPage) { gallery.size }
+    val minimumFlingVelocity = LocalViewConfiguration.current.minimumFlingVelocity
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val pageAtDefaultWidth = remember(gallery) { mutableStateMapOf<MarkdownNodeKey, Boolean>() }
+    var intendedPage by remember(gallery) { mutableIntStateOf(initialPage) }
+    val pagerGesture = remember(gallery) { MarkdownImagePagerGesture(initialPage) }
+    val pagerDragState = remember(pagerState, pagerGesture) {
+        MarkdownImagePagerDragState(pagerState) { delta -> pagerGesture.dragDistancePx += delta }
+    }
     var controlsVisible by remember { mutableStateOf(true) }
     var topBarHeightPx by remember { mutableIntStateOf(0) }
-    val settledPage = pagerState.settledPage.coerceIn(gallery.indices)
-    val presentedPage = pagerState.targetPage.coerceIn(gallery.indices)
+    val presentedPage = intendedPage.coerceIn(gallery.indices)
     val currentImage = gallery[presentedPage]
     val canGoPrevious = presentedPage > 0
     val canGoNext = presentedPage < gallery.lastIndex
 
-    fun animateToPage(page: Int) {
-        if (page !in gallery.indices) return
-        scope.launch { pagerState.animateScrollToPage(page) }
-    }
+    MarkdownImageViewerSystemBarsEffect(visible = controlsVisible)
 
-    LaunchedEffect(image.metadata.key, gallery) {
-        val requestedPage = gallery.indexOfFirst { it.metadata.key == image.metadata.key }
-        if (requestedPage >= 0 && requestedPage != pagerState.settledPage) {
-            pagerState.scrollToPage(requestedPage)
+    fun settleToPage(page: Int, pointerVelocity: Float = 0f) {
+        if (page !in gallery.indices) return
+        intendedPage = page
+        onImageChange(gallery[page])
+        scope.launch {
+            pagerState.settleToPageWithoutOvershoot(
+                page = page,
+                initialScrollVelocity = -pointerVelocity,
+            )
         }
-    }
-    LaunchedEffect(pagerState, gallery) {
-        snapshotFlow { pagerState.settledPage }
-            .distinctUntilChanged()
-            .collect { page -> gallery.getOrNull(page)?.let(onImageChange) }
     }
 
     Box(modifier.background(Color.Black)) {
         HorizontalPager(
             state = pagerState,
-            modifier = Modifier.fillMaxSize(),
-            userScrollEnabled = gallery.size > 1 &&
-                pageAtDefaultWidth[gallery[pagerState.currentPage.coerceIn(gallery.indices)].metadata.key] != false,
-            key = { page -> gallery[page].metadata.key },
+            modifier = Modifier
+                .fillMaxSize()
+                .draggable(
+                    state = pagerDragState,
+                    orientation = Orientation.Horizontal,
+                    enabled = gallery.size > 1 &&
+                        pageAtDefaultWidth[gallery[presentedPage].metadata.key] != false,
+                    startDragImmediately = pagerState.isScrollInProgress,
+                    onDragStarted = {
+                        pagerGesture.anchorPage = intendedPage
+                        pagerGesture.dragDistancePx = 0f
+                    },
+                    onDragStopped = { velocity ->
+                        val target = resolveMarkdownImagePagerTarget(
+                            anchorPage = pagerGesture.anchorPage,
+                            dragDistancePx = pagerGesture.dragDistancePx,
+                            pointerVelocityPxPerSecond = velocity,
+                            minimumFlingVelocityPxPerSecond = minimumFlingVelocity,
+                            pageSizePx = pagerState.layoutInfo.pageSize,
+                            pageCount = gallery.size,
+                        )
+                        settleToPage(target, velocity)
+                    },
+                ),
+            userScrollEnabled = false,
+            key = { page -> gallery[page].metadata.key.imageViewerSaveableKey() },
             overscrollEffect = null,
         ) { page ->
             val pageImage = gallery[page]
@@ -353,12 +559,12 @@ fun MarkdownImageViewer(
                 image = pageImage,
                 imageProvider = imageProvider,
                 onDismiss = onDismiss,
-                active = page == pagerState.settledPage,
+                active = page == presentedPage,
                 allowHorizontalPageSwipe = gallery.size > 1,
                 canGoPrevious = page > 0,
                 canGoNext = page < gallery.lastIndex,
-                onPrevious = { animateToPage(page - 1) },
-                onNext = { animateToPage(page + 1) },
+                onPrevious = { settleToPage(page - 1) },
+                onNext = { settleToPage(page + 1) },
                 onToggleControls = { controlsVisible = !controlsVisible },
                 onDefaultWidthChanged = { atDefaultWidth ->
                     pageAtDefaultWidth[pageImage.metadata.key] = atDefaultWidth
@@ -376,7 +582,7 @@ fun MarkdownImageViewer(
             ) {
                 MarkdownImageNavigationButton(
                     enabled = canGoPrevious,
-                    onClick = { animateToPage(presentedPage - 1) },
+                    onClick = { settleToPage(presentedPage - 1) },
                     icon = Res.drawable.ic_chevron_left_24dp,
                     contentDescription = stringResource(Res.string.previous_image),
                 )
@@ -389,7 +595,7 @@ fun MarkdownImageViewer(
             ) {
                 MarkdownImageNavigationButton(
                     enabled = canGoNext,
-                    onClick = { animateToPage(presentedPage + 1) },
+                    onClick = { settleToPage(presentedPage + 1) },
                     icon = Res.drawable.ic_chevron_right_24dp,
                     contentDescription = stringResource(Res.string.next_image),
                 )
@@ -405,14 +611,15 @@ fun MarkdownImageViewer(
                 slideOutVertically(tween(240, easing = FastOutSlowInEasing)) { -it / 2 },
         ) {
             val measuredTopBarHeight = with(density) { topBarHeightPx.toDp() }
-            val scrimHeight = measuredTopBarHeight + 32.dp
-            val scrimHeightPx = with(density) { scrimHeight.toPx() }
             val statusBarHeightPx = WindowInsets.statusBars.getTop(density).toFloat()
-            val flatFraction = if (scrimHeightPx > 0f) {
-                maxOf(0.1f, statusBarHeightPx / scrimHeightPx).coerceAtMost(1f)
-            } else {
-                0.1f
-            }
+            val statusBarHeight = with(density) { statusBarHeightPx.toDp() }
+            val scrimHeight = statusBarHeight + measuredTopBarHeight + 32.dp
+            val scrimHeightPx = with(density) { scrimHeight.toPx() }
+            val flatFraction = markdownImageViewerScrimFlatFraction(
+                scrimHeightPx = scrimHeightPx,
+                systemBarHeightPx = statusBarHeightPx,
+                topBarHeightPx = topBarHeightPx.toFloat(),
+            )
             val topBarScrim = remember(flatFraction) {
                 smoothMarkdownImageViewerScrimBrush(
                     color = Color.Black.copy(alpha = 0.6f),
@@ -426,58 +633,63 @@ fun MarkdownImageViewer(
                         .height(scrimHeight)
                         .background(topBarScrim),
                 )
-                Row(
+                Box(
                     Modifier
                         .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(horizontal = 8.dp, vertical = 6.dp)
-                        .onSizeChanged { topBarHeightPx = it.height },
-                    verticalAlignment = Alignment.CenterVertically,
+                        .statusBarsPadding(),
                 ) {
-                    Surface(color = Color.Black.copy(alpha = 0.24f), shape = CircleShape) {
-                        IconButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.markdownClickablePointer(),
-                        ) {
-                            Icon(
-                                painter = painterResource(Res.drawable.ic_arrow_back_24dp),
-                                contentDescription = stringResource(Res.string.close_image_viewer),
-                                tint = Color.White,
-                            )
-                        }
-                    }
                     Row(
-                        modifier = Modifier.padding(start = 12.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                            .onSizeChanged { topBarHeightPx = it.height },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        AnimatedContent(
-                            targetState = presentedPage + 1,
-                            contentAlignment = Alignment.CenterStart,
-                            transitionSpec = {
-                                (fadeIn(tween(120)) togetherWith fadeOut(tween(120))) using
-                                    SizeTransform(clip = false) { _, _ ->
-                                        tween(
-                                            durationMillis = 120,
-                                            easing = FastOutSlowInEasing,
-                                        )
-                                    }
-                            },
-                            label = "Markdown image index",
-                        ) { index ->
+                        Surface(color = Color.Black.copy(alpha = 0.24f), shape = CircleShape) {
+                            IconButton(
+                                onClick = onDismiss,
+                                modifier = Modifier.markdownClickablePointer(),
+                            ) {
+                                Icon(
+                                    painter = painterResource(Res.drawable.ic_arrow_back_24dp),
+                                    contentDescription = stringResource(Res.string.close_image_viewer),
+                                    tint = Color.White,
+                                )
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.padding(start = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            AnimatedContent(
+                                targetState = presentedPage + 1,
+                                contentAlignment = Alignment.CenterStart,
+                                transitionSpec = {
+                                    (fadeIn(tween(120)) togetherWith fadeOut(tween(120))) using
+                                        SizeTransform(clip = false) { _, _ ->
+                                            tween(
+                                                durationMillis = 120,
+                                                easing = FastOutSlowInEasing,
+                                            )
+                                        }
+                                },
+                                label = "Markdown image index",
+                            ) { index ->
+                                Text(
+                                    text = index.toString(),
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = Color.White,
+                                )
+                            }
                             Text(
-                                text = index.toString(),
+                                text = " / ${gallery.size}",
                                 style = MaterialTheme.typography.titleLarge,
                                 color = Color.White,
                             )
                         }
-                        Text(
-                            text = " / ${gallery.size}",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = Color.White,
-                        )
+                        androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                        actions(currentImage)
                     }
-                    androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
-                    actions(currentImage)
                 }
             }
         }
@@ -815,7 +1027,8 @@ private fun MarkdownImageViewerPage(
             Modifier
                 .fillMaxSize()
                 .clipToBounds()
-                .pointerInput(layout, minimumScale) {
+                .pointerInput(active, layout, minimumScale) {
+                    if (!active) return@pointerInput
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent()
@@ -833,7 +1046,8 @@ private fun MarkdownImageViewerPage(
                         }
                     }
                 }
-                .pointerInput(layout, minimumScale, allowHorizontalPageSwipe) {
+                .pointerInput(active, layout, minimumScale, allowHorizontalPageSwipe) {
+                    if (!active) return@pointerInput
                     val currentLayout = layout ?: return@pointerInput
                     awaitEachGesture {
                         val velocityTracker = VelocityTracker()
@@ -924,7 +1138,8 @@ private fun MarkdownImageViewerPage(
                         }
                     }
                 }
-                .pointerInput(layout, minimumScale) {
+                .pointerInput(active, layout, minimumScale) {
+                    if (!active) return@pointerInput
                     val currentLayout = layout ?: return@pointerInput
                     detectTapGestures(
                         onTap = { tap ->
