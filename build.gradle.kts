@@ -108,6 +108,8 @@ publishing {
 afterEvaluate {
     extensions.configure<PublishingExtension>("publishing") {
         publications.withType(MavenPublication::class.java).configureEach {
+            val targetSuffix = artifactId.removePrefix(project.name)
+            artifactId = "markdown-compose$targetSuffix"
             artifact(javadocJar)
             pom {
                 name.set("Tiqian Markdown Compose")
