@@ -112,7 +112,7 @@ afterEvaluate {
             pom {
                 name.set("Tiqian Markdown Compose")
                 description.set("A Compose Markdown renderer built on Tiqian's CJK paragraph and math layout engines.")
-                url.set("https://github.com/tiqian-cjk/markdown-compose")
+                url.set("https://github.com/tiqian-cjk/tiqian-markdown")
                 licenses {
                     license {
                         name.set("Mozilla Public License 2.0")
@@ -128,9 +128,9 @@ afterEvaluate {
                     }
                 }
                 scm {
-                    connection.set("scm:git:https://github.com/tiqian-cjk/markdown-compose.git")
-                    developerConnection.set("scm:git:ssh://git@github.com/tiqian-cjk/markdown-compose.git")
-                    url.set("https://github.com/tiqian-cjk/markdown-compose")
+                    connection.set("scm:git:https://github.com/tiqian-cjk/tiqian-markdown.git")
+                    developerConnection.set("scm:git:ssh://git@github.com/tiqian-cjk/tiqian-markdown.git")
+                    url.set("https://github.com/tiqian-cjk/tiqian-markdown")
                 }
             }
         }

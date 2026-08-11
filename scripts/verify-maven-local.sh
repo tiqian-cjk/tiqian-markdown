@@ -3,7 +3,7 @@ set -euo pipefail
 
 markdown_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tiqian_dir="${TIQIAN_CHECKOUT:-$markdown_dir/../Tiqian}"
-math_dir="${MATH_COMPOSE_CHECKOUT:-$markdown_dir/../math-compose}"
+math_dir="${TIQIAN_MATH_CHECKOUT:-$markdown_dir/../tiqian-math}"
 suite_version="${TIQIAN_VERSION:-0.0.0-maven-smoke}"
 repository="${MAVEN_LOCAL_REPOSITORY:-$markdown_dir/build/maven-local-smoke/repository}"
 

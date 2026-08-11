@@ -15,7 +15,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "markdown-compose"
+rootProject.name = "tiqian-markdown"
 
 include(":preview")
 
@@ -52,8 +52,8 @@ if (useLocalTiqianCheckouts && tiqianSettings.isFile) {
 }
 
 val mathCheckout = providers.gradleProperty("mathCheckout").orNull
-    ?: System.getenv("MATH_COMPOSE_CHECKOUT")
-    ?: "../math-compose"
+    ?: System.getenv("TIQIAN_MATH_CHECKOUT")
+    ?: "../tiqian-math"
 val mathSettings = file(mathCheckout).resolve("settings.gradle.kts")
 if (useLocalTiqianCheckouts && mathSettings.isFile) {
     includeBuild(mathCheckout) {

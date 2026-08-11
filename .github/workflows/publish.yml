@@ -12,8 +12,8 @@ on:
         required: true
         default: main
         type: string
-      math_compose_ref:
-        description: math-compose git ref
+      tiqian_math_ref:
+        description: Tiqian Math git ref
         required: true
         default: main
         type: string
@@ -37,7 +37,7 @@ jobs:
       SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
       SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
     steps:
-      - name: Check out markdown-compose
+      - name: Check out Tiqian Markdown
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Check out Tiqian
@@ -47,12 +47,12 @@ jobs:
           ref: ${{ inputs.tiqian_ref }}
           path: Tiqian
 
-      - name: Check out math-compose
+      - name: Check out Tiqian Math
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          repository: tiqian-cjk/math-compose
-          ref: ${{ inputs.math_compose_ref }}
-          path: math-compose
+          repository: tiqian-cjk/tiqian-math
+          ref: ${{ inputs.tiqian_math_ref }}
+          path: tiqian-math
 
       - name: Set up JDK 25
         uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
@@ -73,16 +73,16 @@ jobs:
       - name: Verify lockstep Maven consumption
         env:
           TIQIAN_CHECKOUT: Tiqian
-          MATH_COMPOSE_CHECKOUT: math-compose
+          TIQIAN_MATH_CHECKOUT: tiqian-math
         run: ./scripts/verify-maven-local.sh
 
       - name: Upload Tiqian modules
         run: ./Tiqian/gradlew -p Tiqian publishTiqianToCentral --no-daemon
 
-      - name: Upload math-compose modules
-        run: ./math-compose/gradlew -p math-compose publishMathComposeToCentral --no-daemon
+      - name: Upload Tiqian Math modules
+        run: ./tiqian-math/gradlew -p tiqian-math publishMathComposeToCentral --no-daemon
 
-      - name: Upload markdown-compose modules
+      - name: Upload Tiqian Markdown modules
         run: |
           ./gradlew publishAllPublicationsToCentralRepository \
             -PuseLocalTiqianCheckouts=false \
