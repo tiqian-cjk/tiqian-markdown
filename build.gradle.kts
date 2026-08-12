@@ -94,13 +94,6 @@ compose.resources {
     packageOfResClass = "org.tiqian.markdown.compose.generated.resources"
 }
 
-val javadocJar = tasks.register<Jar>("javadocJar") {
-    archiveClassifier.set("javadoc")
-    from(rootProject.file("LICENSE")) {
-        into("META-INF")
-    }
-}
-
 publishing {
     repositories {
         maven {
@@ -121,9 +114,18 @@ publishing {
 afterEvaluate {
     extensions.configure<PublishingExtension>("publishing") {
         publications.withType(MavenPublication::class.java).configureEach {
+            val publicationName = name
             val targetSuffix = artifactId.removePrefix(project.name)
             artifactId = "markdown-compose$targetSuffix"
-            artifact(javadocJar)
+            artifact(
+                tasks.register<Jar>("${publicationName}PublicationJavadocJar") {
+                    archiveBaseName.set("${project.name}-$publicationName")
+                    archiveClassifier.set("javadoc")
+                    from(rootProject.file("LICENSE")) {
+                        into("META-INF")
+                    }
+                },
+            )
             pom {
                 name.set("Tiqian Markdown Compose")
                 description.set("A Compose Markdown renderer built on Tiqian's CJK paragraph and math layout engines.")
