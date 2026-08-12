@@ -43,6 +43,7 @@ import org.tiqian.math.compose.TiqianMathFormula
 import org.tiqian.math.compose.TiqianMathFormulaCanvas
 import org.tiqian.math.compose.rememberLeteMathFontFace
 import org.tiqian.math.compose.rememberMathFontFace
+import org.tiqian.math.compose.rememberPackagedMathFontFamily
 import org.tiqian.math.compose.rememberTiqianMathFormula
 import org.tiqian.math.core.MathAdjustmentPriority
 import org.tiqian.math.core.MathAtomClass
@@ -55,6 +56,11 @@ import org.tiqian.math.layout.MathComposeFontFace
 sealed interface MarkdownMathFont {
     /** Bundled sans-serif OpenType MATH font. */
     data object LeteSansMath : MarkdownMathFont
+
+    /** A family prebaked from the host application's `tiqianMathFonts` Gradle declaration. */
+    data class Packaged(
+        val familyId: String,
+    ) : MarkdownMathFont
 
     /** A host-provided OpenType font containing a MATH table. */
     data class OpenTypeResource(
@@ -339,6 +345,7 @@ fun DefaultMarkdownMathBlock(
 private fun rememberMarkdownMathFontFace(font: MarkdownMathFont): MathComposeFontFace = when (font) {
     MarkdownMathFont.LeteSansMath ->
         rememberLeteMathFontFace()
+    is MarkdownMathFont.Packaged -> rememberPackagedMathFontFamily(font.familyId)
     is MarkdownMathFont.OpenTypeResource -> rememberResolvedMarkdownMathResource(font.resource)
     is MarkdownMathFont.LoadedOpenType -> rememberMathFontFace(font.bytes)
 }
