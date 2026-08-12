@@ -1,6 +1,6 @@
 # 提椠 Markdown
 
-提椠 Markdown 是基于提椠的 Markdown 正文渲染库。
+提椠 Markdown 是基于[提椠](https://github.com/tiqian-cjk/tiqian)的 Markdown 正文渲染库。
 
 提椠 Markdown 在语法节点映射为对应组件之上，进一步处理整篇文章的排版。段落、标题、列表和引用使用提椠的中文断行、标点空间与两端对齐。代码、公式、表格、
 图片、图注和脚注则共享统一的版心、间距与样式体系。
