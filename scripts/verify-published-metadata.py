@@ -2,6 +2,7 @@
 from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
+import zipfile
 
 
 repository = Path(sys.argv[1])
@@ -60,6 +61,30 @@ for version_dir in version_dirs:
             errors.append(f"missing sources archive: {version_dir}")
         if not list(version_dir.glob("*-javadoc.jar")):
             errors.append(f"missing javadoc archive: {version_dir}")
+
+markdown_android_dir = repository / "org" / "tiqian" / "markdown-compose-android" / version
+markdown_android_aar = (
+    markdown_android_dir / f"markdown-compose-android-{version}.aar"
+)
+expected_consumer_rules = (
+    b"-keep,allowobfuscation class org.tiqian.markdown.compose.MarkdownStyleKt",
+    b"-keep,allowobfuscation class org.tiqian.markdown.compose.MaterialMarkdownStyleKt",
+)
+if not markdown_android_aar.is_file():
+    errors.append(f"missing Android publication: {markdown_android_aar}")
+else:
+    with zipfile.ZipFile(markdown_android_aar) as archive:
+        try:
+            consumer_rules = archive.read("proguard.txt")
+        except KeyError:
+            errors.append(f"missing consumer keep rules: {markdown_android_aar}")
+        else:
+            for expected_consumer_rule in expected_consumer_rules:
+                if expected_consumer_rule not in consumer_rules:
+                    errors.append(
+                        f"missing consumer keep rule {expected_consumer_rule!r}: "
+                        f"{markdown_android_aar}"
+                    )
 
 if errors:
     print("\n".join(errors), file=sys.stderr)
