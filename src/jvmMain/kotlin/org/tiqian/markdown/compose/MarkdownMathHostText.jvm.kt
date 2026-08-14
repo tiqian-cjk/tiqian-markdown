@@ -57,6 +57,7 @@ internal class SkiaMarkdownMathTextRunProvider(
     private val shaper = Shaper.makeShaperDrivenWrapper()
     private val replayFaces = LinkedHashMap<MathFaceId, TiqianSkiaMathReplayFace>()
 
+    @Synchronized
     override fun shapeTextAtom(request: MathTextRunRequest): MathTextRunProviderResult {
         restrictedStandaloneTextCapabilityIssue(request)?.let {
             return MathTextRunProviderResult.CapabilityIssue(it)
@@ -180,6 +181,7 @@ internal class SkiaMarkdownMathTextRunProvider(
         )
     }
 
+    @Synchronized
     override fun replayFace(faceId: MathFaceId): SkiaReplayFace? = replayFaces[faceId]
 
     override fun constructionFace(faceId: MathFaceId): SkiaMathFontFace? = null

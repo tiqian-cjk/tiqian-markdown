@@ -1,5 +1,6 @@
 import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
+import org.gradle.api.tasks.Sync
 import org.gradle.jvm.tasks.Jar
 import org.gradle.plugins.signing.SigningExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
@@ -47,6 +48,9 @@ kotlin {
         compileSdk = 37
         minSdk = 27
         androidResources.enable = true
+        optimization {
+            consumerKeepRules.file("consumer-rules.pro")
+        }
         withDeviceTest {
             instrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         }
@@ -64,6 +68,7 @@ kotlin {
             implementation("org.tiqian:math-compose:$tiqianDependencyVersion")
             implementation("org.tiqian:tiqian-font:$tiqianDependencyVersion")
             implementation("com.gallatinapps.syntaxmp:syntaxmp-tokenizer:0.3.0")
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
         }
 
         commonTest.dependencies {
@@ -77,7 +82,7 @@ kotlin {
         }
 
         androidMain.dependencies {
-            implementation("org.tiqian:tiqian-shaping-android-native-font:$tiqianDependencyVersion")
+            implementation("org.tiqian:tiqian-shaping-android-adapter:$tiqianDependencyVersion")
             implementation("androidx.core:core-ktx:1.19.0")
         }
 
@@ -90,8 +95,18 @@ kotlin {
     }
 }
 
+val prepareCommonComposeResources by tasks.registering(Sync::class) {
+    from(layout.projectDirectory.dir("src/commonMain/composeResources")) {
+        // Lete is owned and loaded by math-compose. Do not publish the historical second copy.
+        exclude("font/lete_sans_math_regular.otf")
+        exclude("files/lete_sans_math/OFL.txt")
+    }
+    into(layout.buildDirectory.dir("generated/filteredComposeResources/commonMain"))
+}
+
 compose.resources {
     packageOfResClass = "org.tiqian.markdown.compose.generated.resources"
+    customDirectory("commonMain", layout.dir(prepareCommonComposeResources.map { it.destinationDir }))
 }
 
 publishing {

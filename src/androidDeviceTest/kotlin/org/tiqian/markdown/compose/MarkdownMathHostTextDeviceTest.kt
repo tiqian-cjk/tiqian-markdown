@@ -15,7 +15,7 @@ import org.tiqian.math.layout.MathFormulaCapabilityResult
 import org.tiqian.math.layout.MathLayoutOptions
 import org.tiqian.math.layout.MathTextRunProviderResult
 import org.tiqian.math.layout.MathTextRunRequest
-import org.tiqian.shaping.android.nativefont.AndroidNativeTextShaper
+import org.tiqian.shaping.android.createAndroidTextShaper
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
@@ -27,7 +27,7 @@ class MarkdownMathHostTextDeviceTest {
     fun chineseAndLatinTextAtomsUseReplayableTiqianHostFaces() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val provider = AndroidMarkdownMathTextRunProvider(
-            shaper = AndroidNativeTextShaper(context),
+            shaper = createAndroidTextShaper(),
             preferredFamilies = emptyList(),
         )
         val text = "中文 rate"

@@ -293,6 +293,64 @@ data class MarkdownStyle(
     val headingSpacing: MarkdownHeadingSpacing = MarkdownHeadingSpacing(),
 )
 
+/** Scales article rhythm while preserving every typography and colour decision. */
+fun MarkdownStyle.withBlockSpacingScale(scale: Float): MarkdownStyle {
+    require(scale.isFinite() && scale >= 0f) { "scale must be finite and non-negative" }
+
+    fun MarkdownHeadingLevelSpacing.scaled() = copy(
+        beforeBodyLines = beforeBodyLines * scale,
+        afterBodyLines = afterBodyLines * scale,
+    )
+    return copy(
+        blockSpacing = blockSpacing * scale,
+        compactBlockSpacing = compactBlockSpacing * scale,
+        blockSpacingBodyLines = blockSpacingBodyLines * scale,
+        compactBlockSpacingBodyLines = compactBlockSpacingBodyLines * scale,
+        displayBlockSpacing = displayBlockSpacing * scale,
+        displayBlockSpacingBodyLines = displayBlockSpacingBodyLines * scale,
+        tightListItemSpacing = tightListItemSpacing * scale,
+        tightListItemSpacingBodyLines = tightListItemSpacingBodyLines * scale,
+        listBlockSpacing = listBlockSpacing * scale,
+        listBlockSpacingBodyLines = listBlockSpacingBodyLines * scale,
+        listItemSpacing = listItemSpacing * scale,
+        listItemSpacingBodyLines = listItemSpacingBodyLines * scale,
+        headingSpacing = headingSpacing.copy(
+            level1 = headingSpacing.level1.scaled(),
+            level2 = headingSpacing.level2.scaled(),
+            level3 = headingSpacing.level3.scaled(),
+            level4 = headingSpacing.level4.scaled(),
+            level5 = headingSpacing.level5.scaled(),
+            level6 = headingSpacing.level6.scaled(),
+            betweenBodyLines = headingSpacing.betweenBodyLines * scale,
+        ),
+    )
+}
+
+/** Scales body typography in the library so packed [TextUnit] arithmetic stays out of host code. */
+fun TextStyle.withMarkdownReadingScale(
+    fontSizeScale: Float,
+    lineHeightFromFontSize: Float,
+): TextStyle {
+    require(fontSizeScale.isFinite() && fontSizeScale > 0f) {
+        "fontSizeScale must be finite and positive"
+    }
+    require(lineHeightFromFontSize.isFinite() && lineHeightFromFontSize > 0f) {
+        "lineHeightFromFontSize must be finite and positive"
+    }
+    require(fontSize.isSp) {
+        "TextStyle.fontSize must be sp so Markdown reading scale has a stable body basis"
+    }
+    // `ExplicitSpReadingScale`: body size is the absolute basis for headings, footnotes and
+    // measure-in-ic calculations. Rebuild an sp value explicitly instead of applying generic
+    // packed TextUnit arithmetic, so the host cannot accidentally pass an em-typed body through
+    // platform typography merging.
+    val scaledFontSize = (fontSize.value * fontSizeScale).sp
+    return copy(
+        fontSize = scaledFontSize,
+        lineHeight = (scaledFontSize.value * lineHeightFromFontSize).sp,
+    )
+}
+
 @Immutable
 data class MarkdownCodeHighlightStyle(
     val comment: SpanStyle = SpanStyle(color = Color(0xFF6A737D)),
@@ -365,7 +423,30 @@ internal fun MarkdownStyle.headingGapBodyLines(previous: MarkdownBlock, next: Ma
         nextLevel = (next as? MarkdownHeading)?.level,
     )
 
-internal fun MarkdownStyle.quoteContentStyle(): MarkdownStyle = copy(body = body.merge(quoteText))
+internal fun MarkdownStyle.quoteContentStyle(): MarkdownStyle {
+    val bodyFontSize = body.fontSize.requireSp("MarkdownStyle.body.fontSize")
+    val resolvedFontSize = quoteText.fontSize.resolveAgainst(
+        base = bodyFontSize,
+        fallback = bodyFontSize,
+        label = "MarkdownStyle.quoteText.fontSize",
+    )
+    val inheritedLineHeight = when {
+        body.lineHeight.isSp -> body.lineHeight
+        body.lineHeight.isEm -> resolvedFontSize * body.lineHeight.value
+        else -> TextUnit.Unspecified
+    }
+    val resolvedLineHeight = quoteText.lineHeight.resolveAgainst(
+        base = resolvedFontSize,
+        fallback = inheritedLineHeight,
+        label = "MarkdownStyle.quoteText.lineHeight",
+    )
+    return copy(
+        body = body.merge(quoteText).copy(
+            fontSize = resolvedFontSize,
+            lineHeight = resolvedLineHeight,
+        ),
+    )
+}
 
 internal fun MarkdownStyle.footnoteContentTextStyle(): TextStyle {
     val bodyFontSize = body.fontSize.requireSp("MarkdownStyle.body.fontSize")

@@ -240,6 +240,7 @@ internal fun resolveMarkdownText(
     inlineSlots: MarkdownInlineSlots,
     onLinkClick: ((String) -> Unit)?,
     onFootnoteClick: ((String) -> Unit)?,
+    preparedInlineMath: Map<Int, MarkdownInlineContent> = emptyMap(),
 ): ResolvedMarkdownText {
     val needsInlineSlotResolution = remember(text.spans, inlineSlots) {
         text.spans.any { span ->
@@ -280,10 +281,14 @@ internal fun resolveMarkdownText(
                 }
             }
 
-            is MarkdownTextMark.InlineMath -> (inlineSlots.math ?: DefaultMarkdownMathInlineSlot).let { slot ->
-                key("math", index) { slot(mark, style, textStyle) }?.let { content ->
-                    if (content.metrics == null) return@let
-                    replacements += content.toInlineReplacements(
+            is MarkdownTextMark.InlineMath -> {
+                val prepared = preparedInlineMath[index]
+                val content = prepared ?: (inlineSlots.math ?: DefaultMarkdownMathInlineSlot).let { slot ->
+                    key("math", index) { slot(mark, style, textStyle) }
+                }
+                content?.let {
+                    if (it.metrics == null) return@let
+                    replacements += it.toInlineReplacements(
                         spanIndex = index,
                         sourceRange = span.range,
                         idPrefix = "markdown-inline-$index",
@@ -321,6 +326,30 @@ internal fun resolveMarkdownText(
             onFootnoteClick = onFootnoteClick,
         )
     }
+}
+
+internal fun resolveMarkdownTextWithPreparedMath(
+    text: MarkdownText,
+    style: MarkdownStyle,
+    preparedInlineMath: Map<Int, MarkdownInlineContent>,
+): ResolvedMarkdownText {
+    val replacements = text.spans.mapIndexedNotNull { index, span ->
+        val content = preparedInlineMath[index] ?: return@mapIndexedNotNull null
+        content.toInlineReplacements(
+            spanIndex = index,
+            sourceRange = span.range,
+            idPrefix = "markdown-inline-$index",
+            sourceText = text.value.substring(span.range.start, span.range.endExclusive),
+        )
+    }.flatten().sortedBy { it.range.start }
+    return buildResolvedMarkdownText(
+        text = text,
+        style = style,
+        replacements = replacements,
+        customPresentations = emptyMap(),
+        onLinkClick = null,
+        onFootnoteClick = null,
+    )
 }
 
 private fun MarkdownInlineContent.withSourceAlternateText(sourceText: String): MarkdownInlineContent =

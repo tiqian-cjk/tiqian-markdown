@@ -17,7 +17,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.use
-import kotlinx.coroutines.runBlocking
 import org.tiqian.compose.CjkInlineObject
 import org.tiqian.compose.CjkInlineObjectBoundary
 import org.tiqian.compose.CjkInlineObjectPreferredStretch
@@ -29,7 +28,6 @@ import org.tiqian.core.LineLengthGrid
 import org.tiqian.core.ParagraphStyle
 import org.tiqian.core.TextRange as CoreTextRange
 import org.tiqian.core.positionedClusters
-import org.tiqian.markdown.compose.generated.resources.Res
 import kotlin.test.Ignore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -38,25 +36,6 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalComposeUiApi::class)
 class MarkdownMathRenderingTest {
-    @Test
-    fun bundledLeteSansMathContainsOpenTypeMathTable() = runBlocking {
-        val bytes = Res.readBytes("font/lete_sans_math_regular.otf")
-
-        assertEquals("OTTO", bytes.decodeToString(0, 4))
-        val tableCount = bytes.readUnsignedShort(4)
-        val tags = (0 until tableCount).map { index ->
-            val offset = 12 + index * 16
-            bytes.decodeToString(offset, offset + 4)
-        }
-        assertTrue("MATH" in tags, "bundled Lete Sans Math is missing its OpenType MATH table")
-        listOf(0x2A00, 0x2AFF, 0x1D49C).forEach { codePoint ->
-            assertTrue(
-                bytes.format12CmapContains(codePoint),
-                "bundled Lete Sans Math is missing U+${codePoint.toString(16).uppercase()}",
-            )
-        }
-    }
-
     @Test
     fun defaultInlineRendererRetainsTrueBaselineMetrics() {
         var capturedMetrics: MarkdownInlineMetrics? = null
@@ -262,6 +241,38 @@ class MarkdownMathRenderingTest {
         assertEquals(MarkdownInlinePreferredStretchKind.Relation, boundaries[3].preferredStretch?.kind)
         assertTrue(!boundaries[3].preventsLineBreak, "the boundary after = is the real break")
         assertEquals(boundaries[3].shrinkCapacityPx, boundaries[3].lineEndDiscardableAdvancePx)
+    }
+
+    @Test
+    fun namedOperatorSourceRemainsOneSelectionObject() {
+        val operator = "\\operatorname{lim}"
+        val expression = "a+$operator+b"
+        val source = "前${expression}后"
+        var resolved: ResolvedMarkdownText? = null
+
+        ImageComposeScene(width = 360, height = 120) {
+            resolved = resolveMarkdownText(
+                text = MarkdownText(
+                    value = source,
+                    spans = listOf(
+                        MarkdownTextSpan(
+                            range = MarkdownTextRange(1, 1 + expression.length),
+                            mark = MarkdownTextMark.InlineMath(expression),
+                        ),
+                    ),
+                ),
+                style = MarkdownStyle(),
+                textStyle = TextStyle(fontSize = 24.sp),
+                inlineSlots = DefaultMarkdownInlineSlots,
+                onLinkClick = null,
+                onFootnoteClick = null,
+            )
+        }.use { scene -> scene.render(0L) }
+
+        val objects = assertNotNull(resolved).tiqianInlineObjects
+        val namedOperator = objects.single { it.content.alternateText == operator }
+        assertEquals(3, namedOperator.start)
+        assertEquals(3 + operator.length, namedOperator.endExclusive)
     }
 
     @Test
@@ -674,34 +685,4 @@ class MarkdownMathRenderingTest {
             "formula-bearing lines must stay near the 30px body line height, not the math font box: $heights",
         )
     }
-}
-
-private fun ByteArray.readUnsignedShort(offset: Int): Int =
-    ((this[offset].toInt() and 0xFF) shl 8) or (this[offset + 1].toInt() and 0xFF)
-
-private fun ByteArray.readUnsignedInt(offset: Int): Int =
-    ((this[offset].toInt() and 0xFF) shl 24) or
-        ((this[offset + 1].toInt() and 0xFF) shl 16) or
-        ((this[offset + 2].toInt() and 0xFF) shl 8) or
-        (this[offset + 3].toInt() and 0xFF)
-
-private fun ByteArray.format12CmapContains(codePoint: Int): Boolean {
-    val tableCount = readUnsignedShort(4)
-    val cmapRecord = (0 until tableCount).firstOrNull { index ->
-        val record = 12 + index * 16
-        decodeToString(record, record + 4) == "cmap"
-    } ?: return false
-    val cmapOffset = readUnsignedInt(12 + cmapRecord * 16 + 8)
-    val encodingCount = readUnsignedShort(cmapOffset + 2)
-    for (index in 0 until encodingCount) {
-        val record = cmapOffset + 4 + index * 8
-        val subtable = cmapOffset + readUnsignedInt(record + 4)
-        if (readUnsignedShort(subtable) != 12) continue
-        val groupCount = readUnsignedInt(subtable + 12)
-        for (groupIndex in 0 until groupCount) {
-            val group = subtable + 16 + groupIndex * 12
-            if (codePoint in readUnsignedInt(group)..readUnsignedInt(group + 4)) return true
-        }
-    }
-    return false
 }

@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,16 +42,18 @@ import org.jetbrains.compose.resources.getSystemResourceEnvironment
 import org.tiqian.math.compose.TiqianMath
 import org.tiqian.math.compose.TiqianMathFormula
 import org.tiqian.math.compose.TiqianMathFormulaCanvas
+import org.tiqian.math.compose.TiqianMathFormulaPreparer
+import org.tiqian.math.compose.createTiqianMathFormulaPreparer
 import org.tiqian.math.compose.rememberLeteMathFontFace
 import org.tiqian.math.compose.rememberMathFontFace
 import org.tiqian.math.compose.rememberPackagedMathFontFamily
-import org.tiqian.math.compose.rememberTiqianMathFormula
 import org.tiqian.math.core.MathAdjustmentPriority
 import org.tiqian.math.core.MathAtomClass
 import org.tiqian.math.core.MathBreakKind
 import org.tiqian.math.core.MathInlineFragment
 import org.tiqian.math.core.MathMode
 import org.tiqian.math.layout.MathComposeFontFace
+import org.tiqian.math.layout.MathTextRunProvider
 
 /** Library-owned math-font selection. The concrete formula engine stays an implementation detail. */
 sealed interface MarkdownMathFont {
@@ -103,6 +106,31 @@ data class MarkdownInlineMetrics(
     }
 }
 
+internal data class MarkdownMathRuntime(
+    val font: MarkdownMathFont,
+    val hostFontFamily: FontFamily?,
+    val fontFace: MathComposeFontFace,
+    val textRunProvider: MathTextRunProvider,
+    val formulaPreparer: TiqianMathFormulaPreparer,
+)
+
+internal val LocalMarkdownMathRuntime = staticCompositionLocalOf<MarkdownMathRuntime?> { null }
+
+@Composable
+internal fun rememberMarkdownMathRuntime(style: MarkdownStyle): MarkdownMathRuntime {
+    val fontFace = rememberMarkdownMathFontFace(style.math.font)
+    val textRunProvider = rememberMarkdownMathTextRunProvider(style.body)
+    return remember(style.math.font, style.body.fontFamily, fontFace, textRunProvider) {
+        MarkdownMathRuntime(
+            font = style.math.font,
+            hostFontFamily = style.body.fontFamily,
+            fontFace = fontFace,
+            textRunProvider = textRunProvider,
+            formulaPreparer = createTiqianMathFormulaPreparer(fontFace, textRunProvider),
+        )
+    }
+}
+
 /** Default library renderer for inline math. */
 val DefaultMarkdownMathInlineSlot:
     @Composable (MarkdownTextMark.InlineMath, MarkdownStyle, TextStyle) -> MarkdownInlineContent? =
@@ -119,25 +147,52 @@ private fun defaultMarkdownInlineMath(
     val expression = mark.expression
     if (expression.isBlank()) return null
 
-    val fontFace = rememberMarkdownMathFontFace(style.math.font)
-    val textRunProvider = rememberMarkdownMathTextRunProvider(hostTextStyle)
+    val runtime = LocalMarkdownMathRuntime.current
+    val fontFace = runtime
+        ?.takeIf { it.font == style.math.font }
+        ?.fontFace
+        ?: rememberMarkdownMathFontFace(style.math.font)
+    val textRunProvider = runtime
+        ?.takeIf { it.hostFontFamily == hostTextStyle.fontFamily }
+        ?.textRunProvider
+        ?: rememberMarkdownMathTextRunProvider(hostTextStyle)
+    val density = LocalDensity.current
+    val preparer = remember(fontFace, textRunProvider) {
+        createTiqianMathFormulaPreparer(fontFace, textRunProvider)
+    }
+    return remember(mark, style.math, hostTextStyle, density, preparer) {
+        prepareDefaultMarkdownInlineMath(mark, style, hostTextStyle, density, preparer)
+    }
+}
+
+internal fun prepareDefaultMarkdownInlineMath(
+    mark: MarkdownTextMark.InlineMath,
+    style: MarkdownStyle,
+    hostTextStyle: TextStyle,
+    density: androidx.compose.ui.unit.Density,
+    preparer: TiqianMathFormulaPreparer,
+): MarkdownInlineContent? {
+    val expression = mark.expression
+    if (expression.isBlank()) return null
     val fontSize = resolveFontSize(
         preferred = style.math.inlineFontSize,
         fallback = hostTextStyle.fontSize,
         lastFallback = style.body.fontSize,
     )
     val color = resolveMathColor(style.math.color, hostTextStyle.color, style.body.color)
-    val formula = rememberTiqianMathFormula(
+    val fontSizePx = with(density) { fontSize.toPx() }
+    val formula = preparer.prepare(
         source = expression,
         mode = MathMode.Inline,
-        style = hostTextStyle.copy(fontSize = fontSize, color = color),
-        fontFace = fontFace,
-        textRunProvider = textRunProvider,
+        fontSizePx = fontSizePx,
+        fontWeight = hostTextStyle.fontWeight?.weight ?: 400,
+        requestedLineHeightPx = hostTextStyle.lineHeight.takeIf { it != TextUnit.Unspecified }?.let {
+            with(density) { it.toPx() }
+        },
+        color = color,
         textLocale = MarkdownMathTextLocale,
     )
     val layout = formula.layoutResult ?: return null
-    val density = LocalDensity.current
-    val fontSizePx = with(density) { fontSize.toPx() }
     val sourceRanges = layout.partitionSource(expression)
     val fragments = if (sourceRanges != null) groupFragmentIndices(layout.fragments).map { group ->
         val groupSource = MarkdownTextRange(sourceRanges[group.first].start, sourceRanges[group.last].endExclusive)
@@ -186,7 +241,6 @@ private fun groupFragmentIndices(fragments: List<MathInlineFragment>): List<IntR
     return groups.map { it.first()..it.last() }
 }
 
-@Composable
 private fun tiqianMathInlineContent(
     sourceExpression: String,
     formula: TiqianMathFormula,
@@ -296,8 +350,15 @@ fun DefaultMarkdownMathBlock(
     val expression = block.expression.trim()
     if (expression.isEmpty()) return
 
-    val fontFace = rememberMarkdownMathFontFace(style.math.font)
-    val textRunProvider = rememberMarkdownMathTextRunProvider(style.body)
+    val runtime = LocalMarkdownMathRuntime.current
+    val fontFace = runtime
+        ?.takeIf { it.font == style.math.font }
+        ?.fontFace
+        ?: rememberMarkdownMathFontFace(style.math.font)
+    val textRunProvider = runtime
+        ?.takeIf { it.hostFontFamily == style.body.fontFamily }
+        ?.textRunProvider
+        ?: rememberMarkdownMathTextRunProvider(style.body)
     val baseFontSize = resolveFontSize(
         preferred = style.math.displayFontSize,
         fallback = style.body.fontSize,
@@ -342,7 +403,7 @@ fun DefaultMarkdownMathBlock(
 }
 
 @Composable
-private fun rememberMarkdownMathFontFace(font: MarkdownMathFont): MathComposeFontFace = when (font) {
+internal fun rememberMarkdownMathFontFace(font: MarkdownMathFont): MathComposeFontFace = when (font) {
     MarkdownMathFont.LeteSansMath ->
         rememberLeteMathFontFace()
     is MarkdownMathFont.Packaged -> rememberPackagedMathFontFamily(font.familyId)
