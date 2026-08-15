@@ -34,7 +34,9 @@ import org.tiqian.compose.CjkInlineBackgroundDrawStyle
 import org.tiqian.compose.CjkInlineBackgroundMetricPolicy
 import org.tiqian.compose.CjkInlineDecoration
 import org.tiqian.compose.CjkInlineDecorationStyle
+import org.tiqian.compose.addCjkInteractionOnlyAnnotation
 import org.tiqian.compose.addCjkInlineAttachment
+import org.tiqian.compose.addTechnicalInlineAnnotation
 import org.tiqian.core.InlineAttachment
 
 /** Compose-facing extension points for inline objects and host-defined inline semantics. */
@@ -427,6 +429,23 @@ private fun buildResolvedMarkdownText(
     val decorations = mutableListOf<ResolvedInlineDecoration>()
     val interactions = mutableListOf<ResolvedInlineInteraction>()
     val annotated = AnnotatedString.Builder(base).apply {
+        fun addRendererOwnedInlineCode(start: Int, end: Int) {
+            addStyle(style.inlineCode.copy(background = Color.Unspecified), start, end)
+            addTechnicalInlineAnnotation(start, end)
+            if (style.inlineCode.background != Color.Unspecified) {
+                backgrounds += ResolvedInlineBackground(
+                    start = start,
+                    endExclusive = end,
+                    color = style.inlineCode.background,
+                    horizontalPadding = style.inlineCodeHorizontalPadding,
+                    verticalPadding = style.inlineCodeVerticalPadding,
+                    cornerRadius = style.inlineCodeCornerRadius,
+                    adjacentSameStyleClearance = style.adjacentSameStyleClearance,
+                    metricPolicy = CjkInlineBackgroundMetricPolicy.ParagraphTextStyle,
+                )
+            }
+        }
+
         text.spans.forEachIndexed { index, span ->
             val start = mapOffset(span.range.start, nonOverlappingReplacements, end = false).coerceIn(0, length)
             val end = mapOffset(span.range.endExclusive, nonOverlappingReplacements, end = true).coerceIn(start, length)
@@ -441,19 +460,7 @@ private fun buildResolvedMarkdownText(
                 )
 
                 MarkdownTextMark.InlineCode -> {
-                    addStyle(style.inlineCode.copy(background = Color.Unspecified), start, end)
-                    if (style.inlineCode.background != Color.Unspecified) {
-                        backgrounds += ResolvedInlineBackground(
-                            start = start,
-                            endExclusive = end,
-                            color = style.inlineCode.background,
-                            horizontalPadding = style.inlineCodeHorizontalPadding,
-                            verticalPadding = style.inlineCodeVerticalPadding,
-                            cornerRadius = style.inlineCodeCornerRadius,
-                            adjacentSameStyleClearance = style.adjacentSameStyleClearance,
-                            metricPolicy = CjkInlineBackgroundMetricPolicy.ParagraphTextStyle,
-                        )
-                    }
+                    addRendererOwnedInlineCode(start, end)
                 }
                 MarkdownTextMark.Highlight -> {
                     addStyle(style.highlight.copy(background = Color.Unspecified), start, end)
@@ -481,6 +488,7 @@ private fun buildResolvedMarkdownText(
 
                 MarkdownTextMark.KeyboardInput -> {
                     addStyle(style.keyboardInput.copy(background = Color.Unspecified), start, end)
+                    addTechnicalInlineAnnotation(start, end)
                     if (style.keyboardInputBorderColor != Color.Unspecified) {
                         backgrounds += ResolvedInlineBackground(
                             start = start,
@@ -525,6 +533,7 @@ private fun buildResolvedMarkdownText(
 
                 is MarkdownTextMark.Footnote -> {
                     addCjkInlineAttachment(InlineAttachment.Previous, start, end)
+                    addCjkInteractionOnlyAnnotation(start, end)
                     addStyle(
                         style.footnoteReference.merge(
                             SpanStyle(baselineShift = BaselineShift.Superscript),
@@ -549,7 +558,7 @@ private fun buildResolvedMarkdownText(
 
                 is MarkdownTextMark.Ruby -> Unit
                 is MarkdownTextMark.InlineMath -> if (index !in replacementIndexes) {
-                    addStyle(style.inlineCode, start, end)
+                    addRendererOwnedInlineCode(start, end)
                 }
 
                 is MarkdownTextMark.InlineImage -> if (index !in replacementIndexes) {
@@ -572,6 +581,7 @@ private fun buildResolvedMarkdownText(
                     addStyle(presentation.style, start, end)
                     presentation.onClick?.let { callback ->
                         val markedText = text.value.substring(span.range.start, span.range.endExclusive)
+                        addCjkInteractionOnlyAnnotation(start, end)
                         addLink(
                             LinkAnnotation.Clickable(
                                 tag = "markdown-custom-$index",

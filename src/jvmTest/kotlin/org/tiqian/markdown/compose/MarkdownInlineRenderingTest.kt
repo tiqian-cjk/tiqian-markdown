@@ -26,6 +26,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -33,7 +34,11 @@ import androidx.compose.ui.use
 import org.tiqian.compose.CjkText
 import org.tiqian.compose.CjkInlineBackgroundDrawStyle
 import org.tiqian.compose.CjkInlineBackgroundMetricPolicy
+import org.tiqian.compose.createPlatformParagraphMeasurer
+import org.tiqian.compose.measureWithInlineContent
+import org.tiqian.core.LayoutConstraints
 import org.tiqian.core.LayoutResult
+import org.tiqian.core.TextRange
 import org.tiqian.core.getBoundingBoxes
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -269,6 +274,24 @@ class MarkdownInlineRenderingTest {
         assertEquals(3.dp, background.cornerRadius)
         assertEquals(1.dp, background.adjacentSameStyleClearance)
         assertEquals(CjkInlineBackgroundMetricPolicy.ParagraphTextStyle, background.metricPolicy)
+        val layout = createPlatformParagraphMeasurer().measureWithInlineContent(
+            text = lowered.annotated,
+            constraints = LayoutConstraints(maxWidth = 240f),
+            density = Density(1f),
+            style = TextStyle(fontSize = 24.sp),
+            inlineObjects = emptyList(),
+            inlineBackgrounds = lowered.backgrounds.toCjkInlineBackgrounds(),
+        )
+        assertTrue(
+            layout.debug.breakOpportunityDecisions.any { decision ->
+                decision.range == TextRange(1, 5) &&
+                    decision.reason == "ProgressiveTechnicalWholeTokenWrap"
+            },
+        )
+        val inlineBox = layout.debug.inlineBoxDecisions.single()
+        assertEquals(TextRange(1, 5), inlineBox.range)
+        assertEquals(4f, inlineBox.inlineStart, 0.01f)
+        assertEquals(4f, inlineBox.inlineEnd, 0.01f)
     }
 
     @Test
@@ -314,6 +337,102 @@ class MarkdownInlineRenderingTest {
             box.drawStyle,
         )
         assertEquals(CjkInlineBackgroundMetricPolicy.ParagraphTextStyle, box.metricPolicy)
+        val layout = createPlatformParagraphMeasurer().measureWithInlineContent(
+            text = lowered.annotated,
+            constraints = LayoutConstraints(maxWidth = 240f),
+            density = Density(1f),
+            style = TextStyle(fontSize = 24.sp),
+            inlineObjects = emptyList(),
+            inlineBackgrounds = lowered.backgrounds.toCjkInlineBackgrounds(),
+        )
+        assertTrue(
+            layout.debug.breakOpportunityDecisions.any { decision ->
+                decision.range == TextRange(1, 5) &&
+                    decision.reason == "ProgressiveTechnicalWholeTokenWrap"
+            },
+        )
+        assertEquals(1, layout.debug.inlineBoxDecisions.size)
+    }
+
+    @Test
+    fun unsupportedInlineMathUsesTheCompleteInlineCodeFallback() {
+        var resolved: ResolvedMarkdownText? = null
+        ImageComposeScene(width = 240, height = 72) {
+            resolved = resolveMarkdownText(
+                text = MarkdownText(
+                    value = "中x+y中",
+                    spans = listOf(
+                        MarkdownTextSpan(MarkdownTextRange(1, 4), MarkdownTextMark.InlineMath("x+y")),
+                    ),
+                ),
+                style = MarkdownStyle(),
+                textStyle = TextStyle(fontSize = 24.sp),
+                inlineSlots = MarkdownInlineSlots(math = { _, _, _ -> null }),
+                onLinkClick = null,
+                onFootnoteClick = null,
+            )
+        }.use { scene -> scene.render(0L) }
+
+        val lowered = assertNotNull(resolved)
+        assertEquals(Color.Unspecified, lowered.annotated.spanStyles.single().item.background)
+        assertEquals(1, lowered.backgrounds.size)
+        val layout = createPlatformParagraphMeasurer().measureWithInlineContent(
+            text = lowered.annotated,
+            constraints = LayoutConstraints(maxWidth = 240f),
+            density = Density(1f),
+            style = TextStyle(fontSize = 24.sp),
+            inlineObjects = emptyList(),
+            inlineBackgrounds = lowered.backgrounds.toCjkInlineBackgrounds(),
+        )
+        assertTrue(
+            layout.debug.breakOpportunityDecisions.any { decision ->
+                decision.range == TextRange(1, 4) &&
+                    decision.reason == "ProgressiveTechnicalWholeTokenWrap"
+            },
+        )
+        assertEquals(1, layout.debug.inlineBoxDecisions.size)
+    }
+
+    @Test
+    fun footnoteAndCustomClicksStayInteractiveWithoutBecomingTechnicalLinks() {
+        var resolved: ResolvedMarkdownText? = null
+        ImageComposeScene(width = 360, height = 72) {
+            resolved = resolveMarkdownText(
+                text = MarkdownText(
+                    value = "中[1]与mark及link中",
+                    spans = listOf(
+                        MarkdownTextSpan(MarkdownTextRange(1, 4), MarkdownTextMark.Footnote("1", 1)),
+                        MarkdownTextSpan(MarkdownTextRange(5, 9), MarkdownTextMark.Custom("click")),
+                        MarkdownTextSpan(
+                            MarkdownTextRange(10, 14),
+                            MarkdownTextMark.Link("https://example.com"),
+                        ),
+                    ),
+                ),
+                style = MarkdownStyle(),
+                textStyle = TextStyle(fontSize = 24.sp),
+                inlineSlots = MarkdownInlineSlots(
+                    custom = { _, _, _ -> MarkdownCustomInlinePresentation(onClick = {}) },
+                ),
+                onLinkClick = {},
+                onFootnoteClick = {},
+            )
+        }.use { scene -> scene.render(0L) }
+
+        val lowered = assertNotNull(resolved)
+        assertEquals(3, lowered.annotated.getLinkAnnotations(0, lowered.annotated.length).size)
+        val layout = createPlatformParagraphMeasurer().measureWithInlineContent(
+            text = lowered.annotated,
+            constraints = LayoutConstraints(maxWidth = 360f),
+            density = Density(1f),
+            style = TextStyle(fontSize = 24.sp),
+            inlineObjects = emptyList(),
+            inlineBackgrounds = lowered.backgrounds.toCjkInlineBackgrounds(),
+        )
+        val technicalRanges = layout.debug.breakOpportunityDecisions.map { it.range }.toSet()
+        assertTrue(TextRange(10, 14) in technicalRanges)
+        assertTrue(TextRange(1, 4) !in technicalRanges)
+        assertTrue(TextRange(5, 9) !in technicalRanges)
     }
 
     @Test
