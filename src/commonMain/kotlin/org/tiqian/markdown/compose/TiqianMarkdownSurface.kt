@@ -82,6 +82,7 @@ fun TiqianMarkdownSurface(
                 true
             }
         },
+        compensateScrollBy = { deltaPx -> scrollState.dispatchRawDelta(deltaPx.toFloat()) },
     )
     val article: @Composable () -> Unit = {
         CompositionLocalProvider(LocalMarkdownDeferredLayout provides deferredLayout) {

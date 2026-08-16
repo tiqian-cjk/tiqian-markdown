@@ -188,6 +188,9 @@ internal data class MarkdownDeferredLayout(
     val scrollOffsetPx: () -> Int,
     val requestedOwnerKeys: Set<Any>,
     val onMaterializeOwner: (Any) -> Boolean,
+    // `AnchoredHeightCorrection`: the scroll owner applies this raw pixel delta so height
+    // corrections above the viewport never move the content the reader is looking at.
+    val compensateScrollBy: (Int) -> Unit = {},
 )
 
 internal val LocalMarkdownDeferredLayout = staticCompositionLocalOf<MarkdownDeferredLayout?> { null }
@@ -454,6 +457,9 @@ private fun DeferredMarkdownBlocks(
         ?: windowHeightPx
     val stateHolder = rememberSaveableStateHolder()
     val measuredHeightsPx = remember(blocks, style, prelayoutWidth, density.density, density.fontScale) {
+        // Observability marker: fires only when this retention map is (re)created — repeated
+        // firings mean a remember key is unstable and all measured heights are being wiped.
+        markdownTraceSection("HeightsMapInit") {}
         mutableStateMapOf<Pair<Int, Any>, Int>()
     }
     val blockKeys = remember(blocks) { blocks.map { it.metadata.key } }
@@ -467,6 +473,12 @@ private fun DeferredMarkdownBlocks(
     }
     val footnoteMarkerWidths = rememberFootnoteMarkerWidths(blocks, style)
     var contentOriginInScrollPx by remember { mutableFloatStateOf(Float.NaN) }
+    val scrollAnchor = remember(blocks) { MarkdownScrollAnchor() }
+    // `MaterializationSettleHysteresis`: swipe trains pause longer than the prelayout idle delay,
+    // so keying the wide ±viewport window off scrollInProgress alone made every inter-swipe gap
+    // expand the window and the next swipe collapse it — thousands of churned recompositions and
+    // display-list re-records. The window may only widen after a genuine reading pause.
+    val materializationSettled = remember(blocks) { mutableStateOf(false) }
     val currentBlockHeightsDp by remember(
         blockKeys,
         estimatedHeightsPx,
@@ -513,6 +525,19 @@ private fun DeferredMarkdownBlocks(
     ) {
         mutableStateMapOf<Any, MarkdownPrecomputedLayout>()
     }
+    // Top-level blocks the worker has fully processed. Container blocks (quotes) store entries
+    // under their NESTED blocks' keys, so map membership alone cannot mark the owner as done.
+    val prelaidOwnerKeys = remember(
+        blocks,
+        style,
+        prelayoutWidth,
+        inlineSlots,
+        mathRuntime,
+        density.density,
+        density.fontScale,
+    ) {
+        mutableSetOf<Any>()
+    }
     LaunchedEffect(
         blocks,
         style,
@@ -526,14 +551,25 @@ private fun DeferredMarkdownBlocks(
         measurementSession,
         deferredLayout.scrollInProgress,
     ) {
-        if (deferredLayout.scrollInProgress) return@LaunchedEffect
+        val scrolling = deferredLayout.scrollInProgress
         val widthPx = with(density) { prelayoutWidth.toPx() }.coerceAtLeast(1f)
         val defaultMath = inlineSlots.math == null && mathRuntime != null
-        // `IdleWholeDocumentPrelayout`: visible prose never waits for this work. Once scrolling has
-        // settled, retain exact layouts for the whole active document in current reading order;
-        // starting after a short quiet period keeps cold start and active gestures uncontended.
+        // `ScrollAheadPrelayout`: while the reader is scrolling, prelayout keeps running inside a
+        // bounded look-ahead window in the scroll direction so a block's first render happens off
+        // the UI thread BEFORE it enters the viewport; one block per frame keeps gestures
+        // uncontended. `IdleWholeDocumentPrelayout`: once scrolling settles for a short quiet
+        // period, coverage widens to the whole active document in current reading order. Visible
+        // prose never waits for either.
         withFrameNanos { }
-        delay(BackgroundPrelayoutIdleDelayMillis)
+        if (scrolling) {
+            materializationSettled.value = false
+        } else {
+            launch {
+                delay(NearViewportMaterializationSettleDelayMillis)
+                materializationSettled.value = true
+            }
+        }
+        if (!scrolling) delay(BackgroundPrelayoutIdleDelayMillis)
         coroutineScope {
             val wakeWorker = Channel<Unit>(capacity = Channel.CONFLATED)
             var latestVisibleRange: IntRange = IntRange.EMPTY
@@ -581,19 +617,31 @@ private fun DeferredMarkdownBlocks(
                 val workerMeasurer = createPlatformParagraphMeasurer(session = measurementSession)
                 while (isActive) {
                     wakeWorker.receive()
-                    val priority = backgroundPrelayoutPriorityIndices(
-                        blocks = blocks,
-                        visibleRange = latestVisibleRange,
-                        forward = latestForward,
-                        defaultMath = defaultMath,
-                    )
+                    val priority = if (scrolling) {
+                        prelayoutMarkdownBlockIndices(
+                            blocks = blocks,
+                            visibleRange = latestVisibleRange,
+                            forward = latestForward,
+                            defaultMath = defaultMath,
+                            blockHeightsPx = latestHeightsPx,
+                            prefetchDistancePx = viewportHeightPx.coerceAtLeast(1) *
+                                ScrollAheadPrelayoutViewportBudget,
+                        )
+                    } else {
+                        backgroundPrelayoutPriorityIndices(
+                            blocks = blocks,
+                            visibleRange = latestVisibleRange,
+                            forward = latestForward,
+                            defaultMath = defaultMath,
+                        )
+                    }
                     val index = priority.firstOrNull { candidate ->
-                        markdownSelectionKey(blocks[candidate].metadata.key) !in precomputedLayouts
+                        markdownSelectionKey(blocks[candidate].metadata.key) !in prelaidOwnerKeys
                     } ?: continue
                     val block = blocks[index]
-                    val key = markdownSelectionKey(block.metadata.key)
-                    val result = withContext(Dispatchers.Default) {
-                        precomputeMarkdownBlock(
+                    val ownerKey = markdownSelectionKey(block.metadata.key)
+                    val entries = withContext(Dispatchers.Default) {
+                        precomputeMarkdownBlockEntries(
                             block = block,
                             style = style,
                             inlineSlots = inlineSlots,
@@ -603,9 +651,11 @@ private fun DeferredMarkdownBlocks(
                             measurer = workerMeasurer,
                         )
                     }
-                    if (result != null) precomputedLayouts[key] = result
-                    // At most one paragraph is prepared per display frame. This is idle work, not a
-                    // second eager document render competing with Compose traversal and drawing.
+                    prelaidOwnerKeys += ownerKey
+                    entries.forEach { (key, layout) -> precomputedLayouts[key] = layout }
+                    // At most one paragraph is prepared per display frame, so neither the idle
+                    // whole-document pass nor scroll-ahead prefetch becomes a second eager document
+                    // render competing with Compose traversal and drawing.
                     withFrameNanos { }
                     wakeWorker.trySend(Unit)
                 }
@@ -638,12 +688,103 @@ private fun DeferredMarkdownBlocks(
             blockTops[index] = totalHeight.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
             totalHeight += height
         }
+        // `AnchoredHeightCorrection`: block positions accumulate from the document top, so ANY
+        // resolved-height change above the first visible block (estimate→measured swap, image
+        // arrival) moves every later block — the reader sees their content jump. Pin the anchor
+        // block by handing the scroll owner exactly the anchor's document-position delta in the
+        // same measure pass, then re-anchor to the current first visible block.
+        if (blocks.isNotEmpty() && !visibleRange.isEmpty()) {
+            val anchorIndex = scrollAnchor.key
+                ?.let { key -> blockKeys.indexOf(key) }
+                ?.takeIf { it >= 0 }
+            if (anchorIndex != null) {
+                val delta = blockTops[anchorIndex] - scrollAnchor.topPx
+                if (delta != 0) {
+                    // Observability marker: pairs each compensation with its pixel delta so a
+                    // trace shows exactly when and how hard the anchor moved.
+                    markdownTraceSection("AnchorCompensate:d=$delta") {
+                        deferredLayout.compensateScrollBy(delta)
+                    }
+                }
+            }
+            val nextAnchor = visibleRange.first.coerceIn(0, blocks.lastIndex)
+            scrollAnchor.key = blockKeys[nextAnchor]
+            scrollAnchor.topPx = blockTops[nextAnchor]
+        }
         val childConstraints = constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity)
+        // `NearViewportMaterialization`: while the scroll is settled, keep blocks around the
+        // visible range composed and truly measured before they scroll on-screen, admitting a
+        // bounded number of not-yet-measured blocks per pass (each measured height updates state
+        // and re-enters this measure, so the window fills progressively and then goes quiet).
+        // `ScrollAheadMaterialization`: during an active scroll, traversing the settled ±window
+        // every frame is a steady tax the SD835 class cannot absorb, but ZERO lead makes prose
+        // visibly pop in blank — its region scrolls on-screen before its first composition and
+        // paint. Keep a sub-viewport strip composed ahead of the travel direction (inferred from
+        // visible-range movement, NOT the raw scroll offset, so this measure does not re-run on
+        // every scrolled pixel) so first paint happens off-screen.
+        // Direction updates ONLY when the range start actually moves; passes triggered by
+        // admissions or state flips keep the last known direction — comparing with >= made
+        // every same-start pass read as "forward", flapping the strip on upward scrolls.
+        val forward = when {
+            visibleRange.isEmpty() -> scrollAnchor.prevForward
+            visibleRange.first > scrollAnchor.prevRangeFirst -> true
+            visibleRange.first < scrollAnchor.prevRangeFirst -> false
+            else -> scrollAnchor.prevForward
+        }
+        scrollAnchor.prevForward = forward
+        if (!visibleRange.isEmpty()) scrollAnchor.prevRangeFirst = visibleRange.first
+        val materializeRange = if (visibleRange.isEmpty()) {
+            IntRange.EMPTY
+        } else if (!materializationSettled.value) {
+            val viewportPx = viewportHeightPx.coerceAtLeast(1)
+            val aheadPx = viewportPx * ScrollAheadMaterializationViewportQuarters / 4
+            // Trailing quarter-viewport: just-passed blocks stay composed briefly so a swipe
+            // train does not dispose and recompose them at every direction wobble.
+            val behindPx = viewportPx / 4
+            val abovePx = if (forward) behindPx else aheadPx
+            val belowPx = if (forward) aheadPx else behindPx
+            var first = visibleRange.first.coerceIn(0, blocks.lastIndex)
+            var above = 0
+            while (first > 0 && above < abovePx) {
+                first--
+                above += blockHeights[first]
+            }
+            var last = visibleRange.last.coerceIn(0, blocks.lastIndex)
+            var below = 0
+            while (last < blocks.lastIndex && below < belowPx) {
+                last++
+                below += blockHeights[last]
+            }
+            first..last
+        } else {
+            val windowPx = viewportHeightPx.coerceAtLeast(1) * NearViewportMaterializationViewports
+            var first = visibleRange.first.coerceIn(0, blocks.lastIndex)
+            var above = 0
+            while (first > 0 && above < windowPx) {
+                first--
+                above += blockHeights[first]
+            }
+            var last = visibleRange.last.coerceIn(0, blocks.lastIndex)
+            var below = 0
+            while (last < blocks.lastIndex && below < windowPx) {
+                last++
+                below += blockHeights[last]
+            }
+            first..last
+        }
+        var materializationBudget = if (materializationSettled.value) {
+            NearViewportMaterializationPerPass
+        } else {
+            ScrollAheadMaterializationPerPass
+        }
         val placeables = buildList {
             blocks.forEachIndexed { index, block ->
                 val ownerKey = blockKeys[index]
                 val isRequested = ownerKey in deferredLayout.requestedOwnerKeys
-                val wantsComposition = index in visibleRange || isRequested
+                val isMeasured = (width to ownerKey) in measuredHeightsPx
+                val materialize = index in materializeRange &&
+                    (isMeasured || materializationBudget-- > 0)
+                val wantsComposition = index in visibleRange || isRequested || materialize
                 if (!wantsComposition) return@forEachIndexed
                 val saveableKey = ownerKey.toSaveableMarkdownBlockKey()
                 val placeable = subcompose(ownerKey) {
@@ -763,6 +904,14 @@ private fun MarkdownBlock.supportsBackgroundPrelayout(defaultMath: Boolean): Boo
     val text = when (this) {
         is MarkdownParagraph -> text
         is MarkdownHeading -> text
+        // `QuoteSubtreePrelayout`: a block quote is eligible when every nested block is; its
+        // nested prose is precomputed at the quote's inset width and content style, keyed by
+        // each nested block's own selection key so the ordinary consume path picks it up.
+        is MarkdownBlockQuote -> return blocks.isNotEmpty() &&
+            blocks.all { it.supportsBackgroundPrelayout(defaultMath) }
+        // `ImageFallbackPrelayout`: the URL-text fallback an image renders while offline or on
+        // load error is deterministic, so it can be laid out ahead of entry like any paragraph.
+        is MarkdownImageBlock -> return true
         else -> return false
     }
     return text.spans.none { span ->
@@ -774,6 +923,74 @@ private fun MarkdownBlock.supportsBackgroundPrelayout(defaultMath: Boolean): Boo
             else -> false
         }
     }
+}
+
+private fun precomputeMarkdownBlockEntries(
+    block: MarkdownBlock,
+    style: MarkdownStyle,
+    inlineSlots: MarkdownInlineSlots,
+    mathRuntime: MarkdownMathRuntime?,
+    density: androidx.compose.ui.unit.Density,
+    widthPx: Float,
+    measurer: ParagraphMeasurer,
+): List<Pair<Any, MarkdownPrecomputedLayout>> = when (block) {
+    // `QuoteSubtreePrelayout`: mirror the MarkdownBlockQuote row exactly — the bar spacer and
+    // content padding inset the nested prose width, and nested blocks render with the quote's
+    // content style. Entries are keyed by each nested block's own selection key.
+    is MarkdownBlockQuote -> {
+        val innerWidthPx = with(density) {
+            widthPx - style.quoteBarWidth.roundToPx() - style.quoteContentPadding.roundToPx()
+        }.coerceAtLeast(1f)
+        val quoteStyle = style.quoteContentStyle()
+        block.blocks.flatMap { nested ->
+            precomputeMarkdownBlockEntries(
+                block = nested,
+                style = quoteStyle,
+                inlineSlots = inlineSlots,
+                mathRuntime = mathRuntime,
+                density = density,
+                widthPx = innerWidthPx,
+                measurer = measurer,
+            )
+        }
+    }
+    // `ImageFallbackPrelayout`: precompute the deterministic URL-text fallback under the
+    // fallback's own selection key ("description" scope). When the image loads normally the
+    // entry is simply never consumed; captioned fallbacks keep laying out at entry because
+    // they render without their own fragment key.
+    is MarkdownImageBlock -> {
+        val label = block.description.ifBlank { block.destination }
+        val fallback = MarkdownParagraph(
+            MarkdownText(
+                value = label,
+                spans = listOf(
+                    MarkdownTextSpan(
+                        MarkdownTextRange(0, label.length),
+                        MarkdownTextMark.Link(block.destination, block.title),
+                    ),
+                ),
+            ),
+            block.metadata,
+        )
+        precomputeMarkdownBlock(
+            block = fallback,
+            style = style,
+            inlineSlots = inlineSlots,
+            mathRuntime = mathRuntime,
+            density = density,
+            widthPx = widthPx,
+            measurer = measurer,
+        )?.let { listOf(markdownSelectionKey(block.metadata.key, "description") to it) }.orEmpty()
+    }
+    else -> precomputeMarkdownBlock(
+        block = block,
+        style = style,
+        inlineSlots = inlineSlots,
+        mathRuntime = mathRuntime,
+        density = density,
+        widthPx = widthPx,
+        measurer = measurer,
+    )?.let { listOf(markdownSelectionKey(block.metadata.key) to it) }.orEmpty()
 }
 
 private fun precomputeMarkdownBlock(
@@ -828,6 +1045,38 @@ private fun precomputeMarkdownBlock(
 }
 
 private const val BackgroundPrelayoutMaximumBlocks = 32
+
+// `ScrollAheadPrelayout` keeps this many viewports of upcoming content laid out ahead of the
+// scroll direction; beyond it the worker goes quiet until the viewport moves again.
+private const val ScrollAheadPrelayoutViewportBudget = 2
+
+// `NearViewportMaterialization` keeps this many viewports of surrounding content composed and
+// truly measured on each side of the visible range, admitting at most this many not-yet-measured
+// blocks per measure pass so a fling gap never turns into one mega-frame of catch-up work.
+private const val NearViewportMaterializationViewports = 1
+private const val NearViewportMaterializationPerPass = 2
+
+// `AnchoredHeightCorrection` state: the block whose document position the reader is visually
+// anchored to, and that position at the previous measure pass. Deliberately NOT snapshot state —
+// it is read and written only inside the measure pass.
+private class MarkdownScrollAnchor {
+    var key: Any? = null
+    var topPx: Int = 0
+    // Last pass's visible-range start and travel direction, for inferring scroll direction
+    // without reading the raw scroll offset inside measure.
+    var prevRangeFirst: Int = 0
+    var prevForward: Boolean = true
+}
+
+// `ScrollAheadMaterialization`: how far ahead of the travel direction blocks stay composed
+// during a scroll (in quarter-viewports), and how many new blocks one pass may admit.
+private const val ScrollAheadMaterializationViewportQuarters = 3
+private const val ScrollAheadMaterializationPerPass = 1
+
+// `MaterializationSettleHysteresis`: quiet time required before the composed window may widen
+// from the directional scroll strip to the settled ±viewport window. Longer than any inter-swipe
+// gap in a reading scroll train, shorter than a genuine pause.
+private const val NearViewportMaterializationSettleDelayMillis = 700L
 private const val BackgroundPrelayoutIdleDelayMillis = 250L
 private const val ScrollOriginCalibrationThrottleMillis = 64L
 
@@ -1460,6 +1709,11 @@ private fun MarkdownTextBlock(
     val paragraphMeasurer = rememberMarkdownParagraphMeasurer()
     val selectionFragmentKey = LocalMarkdownSelectionFragmentKey.current
     val precomputed = selectionFragmentKey?.let(LocalMarkdownPrecomputedLayouts.current::get)
+    // Observability marker: whether this text block's composition found a precomputed layout.
+    markdownTraceSection(
+        if (precomputed != null) "MdTextPre:hit:len=${text.value.length}"
+        else "MdTextPre:miss:len=${text.value.length}",
+    ) {}
     val footnoteNavigationState = LocalMarkdownFootnoteNavigationState.current
     val currentLinkClick = rememberUpdatedState(onLinkClick)
     val currentFootnoteClick = rememberUpdatedState(onFootnoteClick)
