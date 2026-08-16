@@ -248,10 +248,16 @@ internal fun DeferredMarkdownBlocks(
             )
         }
     }
+    // `TableSubtreePrelayout`: the prose measure is quantized, so the container width can move
+    // while `prelayoutWidth` stands still — and table cell layouts were measured for columns
+    // negotiated at the container width, yet are consumed by key without a width check. Both
+    // caches therefore retire on the container width too, so a resize can never publish cell
+    // layouts belonging to the previous column widths.
     val precomputedLayouts = remember(
         blocks,
         style,
         prelayoutWidth,
+        layoutWidthPx,
         inlineSlots,
         mathRuntime,
         density.density,
@@ -259,12 +265,27 @@ internal fun DeferredMarkdownBlocks(
     ) {
         mutableStateMapOf<Any, MarkdownPrecomputedLayout>()
     }
+    // Negotiated column widths live beside the prose layouts, keyed by the table's own "widths"
+    // key; the renderer only adopts an entry negotiated for its own measure.
+    val precomputedTableWidths = remember(
+        blocks,
+        style,
+        prelayoutWidth,
+        layoutWidthPx,
+        inlineSlots,
+        mathRuntime,
+        density.density,
+        density.fontScale,
+    ) {
+        mutableStateMapOf<Any, MarkdownPrecomputedTableWidths>()
+    }
     // Top-level blocks the worker has fully processed. Container blocks (quotes) store entries
     // under their NESTED blocks' keys, so map membership alone cannot mark the owner as done.
     val prelaidOwnerKeys = remember(
         blocks,
         style,
         prelayoutWidth,
+        layoutWidthPx,
         inlineSlots,
         mathRuntime,
         density.density,
@@ -284,9 +305,15 @@ internal fun DeferredMarkdownBlocks(
         inlineSlots,
         measurementSession,
         deferredLayout.scrollInProgress,
+        // `TableSubtreePrelayout`: tables fill the whole column, so a container-width change
+        // invalidates their negotiation even when the prose measure is unchanged.
+        layoutWidthPx,
     ) {
         val scrolling = deferredLayout.scrollInProgress
         val widthPx = with(density) { prelayoutWidth.toPx() }.coerceAtLeast(1f)
+        // `layoutWidthPx` is seeded from the prose width and only ever set from a positive
+        // measured width, so it is already the table's own usable column width.
+        val fullWidthPx = layoutWidthPx.toFloat()
         val defaultMath = inlineSlots.math == null && mathRuntime != null
         // `ScrollAheadPrelayout`: while the reader is scrolling, prelayout keeps running inside a
         // bounded look-ahead window in the scroll direction so a block's first render happens off
@@ -382,11 +409,15 @@ internal fun DeferredMarkdownBlocks(
                             mathRuntime = mathRuntime,
                             density = density,
                             widthPx = widthPx,
+                            fullWidthPx = fullWidthPx,
                             measurer = workerMeasurer,
                         )
                     }
                     prelaidOwnerKeys += ownerKey
-                    entries.forEach { (key, layout) -> precomputedLayouts[key] = layout }
+                    entries.layouts.forEach { (key, layout) -> precomputedLayouts[key] = layout }
+                    entries.tableWidths.forEach { (key, widths) ->
+                        precomputedTableWidths[key] = widths
+                    }
                     // At most one paragraph is prepared per display frame, so neither the idle
                     // whole-document pass nor scroll-ahead prefetch becomes a second eager document
                     // render competing with Compose traversal and drawing.
@@ -538,6 +569,7 @@ internal fun DeferredMarkdownBlocks(
                             CompositionLocalProvider(
                                 LocalMarkdownSelectionRetentionKey provides ownerKey,
                                 LocalMarkdownPrecomputedLayouts provides precomputedLayouts,
+                                LocalMarkdownPrecomputedTableWidths provides precomputedTableWidths,
                             ) {
                                 MarkdownBlockItem(
                                     index = index,
