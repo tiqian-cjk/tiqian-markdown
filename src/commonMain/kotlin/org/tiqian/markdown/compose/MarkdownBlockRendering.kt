@@ -922,12 +922,20 @@ fun DefaultMarkdownTable(
         return
     }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
+        // `TableCellLineGrid`: cell prose follows the same integer-em line-length rule as body
+        // text (ADR 0028); the former `enabled = false` came in through an API refactor with no
+        // recorded rationale. Width negotiation keeps columns on the em grid so the quantized
+        // measure never leaves per-line slack.
         val tableParagraphStyle = remember {
             ParagraphStyle(
                 firstLineIndent = 0.ic,
-                lineLengthGrid = LineLengthGrid(enabled = false),
                 lastLineAlignment = LastLineAlignment.Start,
             )
+        }
+        // Probe measures want RAW content widths — quantization belongs to the column
+        // allocator, and a sub-em probe width must not be floored to zero.
+        val tableProbeParagraphStyle = remember(tableParagraphStyle) {
+            tableParagraphStyle.copy(lineLengthGrid = LineLengthGrid(enabled = false))
         }
         val widthResolution = remember(block, style, density, tableMeasurer, columnCount, maxWidth) {
             val horizontalPaddingPx = with(density) { style.tableCellPadding.toPx() * 2f }
@@ -947,7 +955,7 @@ fun DefaultMarkdownTable(
                         text = cell.text.value,
                         constraints = LayoutConstraints(maxWidth = 100_000f),
                         textStyle = coreStyle,
-                        paragraphStyle = tableParagraphStyle,
+                        paragraphStyle = tableProbeParagraphStyle,
                     )
                     val naturalTextWidthPx = unwrapped.lines.maxOfOrNull { line ->
                         line.indent + line.visualWidth + line.hyphenAdvance
@@ -956,13 +964,19 @@ fun DefaultMarkdownTable(
                         (preferredWidthCapPx - horizontalPaddingPx).coerceAtLeast(0f),
                     )
                     val preferredCellWidthPx = preferredContentWidthPx + horizontalPaddingPx
-                    val minimumContentWidthPx = measureTableMinimumContentWidth(
-                        measurer = tableMeasurer,
+                    // `TableMinimumViaMaximalBreaking`: one measure at a minimal measure forces a
+                    // break at every opportunity, so the widest resulting line IS the longest
+                    // unbreakable chunk — replacing the former 10-round binary search that cost
+                    // ten engine layouts per cell.
+                    val maximallyBroken = tableMeasurer.measure(
                         text = cell.text.value,
+                        constraints = LayoutConstraints(maxWidth = 1f),
                         textStyle = coreStyle,
-                        paragraphStyle = tableParagraphStyle,
-                        preferredContentWidth = preferredContentWidthPx,
+                        paragraphStyle = tableProbeParagraphStyle,
                     )
+                    val minimumContentWidthPx = maximallyBroken.lines.maxOfOrNull { line ->
+                        line.indent + line.visualWidth + line.hyphenAdvance
+                    } ?: 0f
                     val readableContentWidthPx = style.tableReadableColumnWidth
                         .toPx(coreStyle.fontSize)
                         .coerceAtMost(preferredContentWidthPx)
@@ -980,12 +994,19 @@ fun DefaultMarkdownTable(
                     )
                 }
             }
+            val availablePx = with(density) { maxWidth.toPx() }
+                .takeIf(Float::isFinite)
+                ?: preferredWidthsPx.sum()
+            // `TableFluidFill` target: tables stretch to the prose fluid tier, not the whole
+            // prose measure — a compact table on a wide measure stays dense.
+            val bodyEmPx = style.body.toCjkTextStyle().toCoreTextStyle(density).fontSize
             resolveMarkdownTableWidths(
                 preferredWidths = preferredWidthsPx,
                 minimumWidths = minimumWidthsPx,
-                availableWidth = with(density) { maxWidth.toPx() }
-                    .takeIf(Float::isFinite)
-                    ?: preferredWidthsPx.sum(),
+                availableWidth = availablePx,
+                emPx = normalCoreStyle.fontSize,
+                fillTargetWidth = minOf(availablePx, style.proseMeasure.fluidStart.count * bodyEmPx),
+                horizontalPaddingPx = horizontalPaddingPx,
             )
         }
         val tableWidth = with(density) { widthResolution.tableWidth.toDp() }
@@ -1085,36 +1106,6 @@ fun DefaultMarkdownTable(
             }
         }
     }
-}
-
-private fun measureTableMinimumContentWidth(
-    measurer: ParagraphMeasurer,
-    text: String,
-    textStyle: CoreTextStyle,
-    paragraphStyle: ParagraphStyle,
-    preferredContentWidth: Float,
-): Float {
-    if (text.isEmpty() || preferredContentWidth <= 0f) return 0f
-    var lower = 0f
-    var upper = preferredContentWidth
-    repeat(10) {
-        val candidate = (lower + upper) / 2f
-        val result = measurer.measure(
-            text = text,
-            constraints = LayoutConstraints(maxWidth = candidate.coerceAtLeast(1f)),
-            textStyle = textStyle,
-            paragraphStyle = paragraphStyle,
-        )
-        val requiredWidth = result.lines.maxOfOrNull { line ->
-            line.indent + line.visualWidth + line.hyphenAdvance
-        } ?: 0f
-        if (requiredWidth <= candidate + 0.5f) {
-            upper = candidate
-        } else {
-            lower = candidate
-        }
-    }
-    return upper
 }
 
 @Composable
