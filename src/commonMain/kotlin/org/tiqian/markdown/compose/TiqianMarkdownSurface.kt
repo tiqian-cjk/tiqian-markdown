@@ -52,7 +52,6 @@ fun TiqianMarkdownSurface(
     header: (@Composable () -> Unit)? = null,
     footer: (@Composable () -> Unit)? = null,
 ) {
-    markdownTraceSection("MdScope:Surface") {}
     val windowHeightPx = LocalWindowInfo.current.containerSize.height
     var viewportHeightPx by remember { mutableIntStateOf(windowHeightPx) }
     val requestedOwnerKeys = remember(document) { mutableStateMapOf<Any, Unit>() }

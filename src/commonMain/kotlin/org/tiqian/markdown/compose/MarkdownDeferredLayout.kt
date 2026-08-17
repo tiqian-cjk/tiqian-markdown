@@ -184,7 +184,6 @@ internal fun DeferredMarkdownBlocks(
     prelayoutWidth: Dp,
     measurementSession: ParagraphMeasurementSession,
 ) {
-    markdownTraceSection("MdScope:Deferred") {}
     val density = LocalDensity.current
     val windowHeightPx = LocalWindowInfo.current.containerSize.height
     val viewportHeightPx = deferredLayout.viewportHeightPx
@@ -484,13 +483,7 @@ internal fun DeferredMarkdownBlocks(
                 ?.takeIf { it >= 0 }
             if (anchorIndex != null) {
                 val delta = blockTops[anchorIndex] - scrollAnchor.topPx
-                if (delta != 0) {
-                    // Observability marker: pairs each compensation with its pixel delta so a
-                    // trace shows exactly when and how hard the anchor moved.
-                    markdownTraceSection("AnchorCompensate:d=$delta") {
-                        deferredLayout.compensateScrollBy(delta)
-                    }
-                }
+                if (delta != 0) deferredLayout.compensateScrollBy(delta)
             }
             val nextAnchor = visibleRange.first.coerceIn(0, blocks.lastIndex)
             scrollAnchor.key = blockKeys[nextAnchor]
@@ -684,7 +677,6 @@ private fun MarkdownBlockItem(
     topLevelProseWidth: Dp?,
     footnoteMarkerWidth: Dp?,
 ) {
-    markdownTraceSection("MdScope:Item") {}
     val block = blocks[index]
     Column(Modifier.fillMaxWidth()) {
         markdownBlockSpacing(

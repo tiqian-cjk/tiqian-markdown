@@ -53,9 +53,6 @@ internal fun MarkdownTextBlock(
     val paragraphMeasurer = rememberMarkdownParagraphMeasurer()
     val selectionFragmentKey = LocalMarkdownSelectionFragmentKey.current
     val precomputed = selectionFragmentKey?.let(LocalMarkdownPrecomputedLayouts.current::get)
-    // Observability marker: whether this text block's composition found a precomputed layout.
-    // Static names only — this runs on every composition, so no per-call string building.
-    markdownTraceSection(if (precomputed != null) "MdTextPre:hit" else "MdTextPre:miss") {}
     val footnoteNavigationState = LocalMarkdownFootnoteNavigationState.current
     val currentLinkClick = rememberUpdatedState(onLinkClick)
     val currentFootnoteClick = rememberUpdatedState(onFootnoteClick)

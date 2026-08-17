@@ -71,7 +71,6 @@ fun TiqianMarkdown(
     footnotePlacement: MarkdownFootnotePlacement = MarkdownFootnotePlacement.AfterBlock,
     codeHighlighter: MarkdownCodeHighlighter = DefaultMarkdownCodeHighlighter,
 ) {
-    markdownTraceSection("MdScope:Root") {}
     val density = LocalDensity.current
     val deferredLayout = LocalMarkdownDeferredLayout.current
     val placedBlocks = remember(document, footnotePlacement) {
