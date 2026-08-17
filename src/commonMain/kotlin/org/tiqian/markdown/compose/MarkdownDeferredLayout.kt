@@ -184,6 +184,7 @@ internal fun DeferredMarkdownBlocks(
     prelayoutWidth: Dp,
     measurementSession: ParagraphMeasurementSession,
 ) {
+    markdownTraceSection("MdScope:Deferred") {}
     val density = LocalDensity.current
     val windowHeightPx = LocalWindowInfo.current.containerSize.height
     val viewportHeightPx = deferredLayout.viewportHeightPx
@@ -206,6 +207,7 @@ internal fun DeferredMarkdownBlocks(
         mutableIntStateOf(with(density) { prelayoutWidth.roundToPx() }.coerceAtLeast(1))
     }
     val footnoteMarkerWidths = rememberFootnoteMarkerWidths(blocks, style)
+    val measureWidthHolder = remember(blocks) { MarkdownMeasureWidthHolder() }
     var contentOriginInScrollPx by remember { mutableFloatStateOf(Float.NaN) }
     val scrollAnchor = remember(blocks) { MarkdownScrollAnchor() }
     // `MaterializationSettleHysteresis`: swipe trains pause longer than the prelayout idle delay,
@@ -281,6 +283,24 @@ internal fun DeferredMarkdownBlocks(
     }
     // Top-level blocks the worker has fully processed. Container blocks (quotes) store entries
     // under their NESTED blocks' keys, so map membership alone cannot mark the owner as done.
+    // `MemoizedBlockContent` cache: one stable composable lambda per block key. Reset whenever
+    // any captured input changes identity so stale captures can never leak into subcompose.
+    val blockContents = remember(
+        blocks,
+        style,
+        slots,
+        inlineSlots,
+        onLinkClick,
+        onFootnoteClick,
+        topLevelProseWidth,
+        footnoteMarkerWidths,
+        stateHolder,
+        measuredHeightsPx,
+        precomputedLayouts,
+        precomputedTableWidths,
+    ) {
+        mutableMapOf<Any, @Composable () -> Unit>()
+    }
     val prelaidOwnerKeys = remember(
         blocks,
         style,
@@ -542,6 +562,7 @@ internal fun DeferredMarkdownBlocks(
         } else {
             ScrollAheadMaterializationPerPass
         }
+        measureWidthHolder.widthPx = width
         val placeables = buildList {
             blocks.forEachIndexed { index, block ->
                 val ownerKey = blockKeys[index]
@@ -552,40 +573,50 @@ internal fun DeferredMarkdownBlocks(
                 val wantsComposition = index in visibleRange || isRequested || materialize
                 if (!wantsComposition) return@forEachIndexed
                 val saveableKey = ownerKey.toSaveableMarkdownBlockKey()
-                val placeable = subcompose(ownerKey) {
-                    stateHolder.SaveableStateProvider(saveableKey) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .onSizeChanged { size ->
-                                    if (
-                                        size.height > 0 &&
-                                        measuredHeightsPx[width to ownerKey] != size.height
-                                    ) {
-                                        measuredHeightsPx[width to ownerKey] = size.height
-                                    }
-                                },
-                        ) {
-                            CompositionLocalProvider(
-                                LocalMarkdownSelectionRetentionKey provides ownerKey,
-                                LocalMarkdownPrecomputedLayouts provides precomputedLayouts,
-                                LocalMarkdownPrecomputedTableWidths provides precomputedTableWidths,
+                // `MemoizedBlockContent`: subcompose content must be the SAME lambda instance
+                // across measure passes — an inline lambda here is a fresh instance every pass,
+                // which forces every composed block to RECOMPOSE on every scroll frame (~10
+                // block compositions and ~4 display-list re-records per frame measured on
+                // SD835). The cached lambda reads the pass width through [measureWidthHolder]
+                // instead of capturing it.
+                val content = blockContents.getOrPut(ownerKey) {
+                    @Composable {
+                        stateHolder.SaveableStateProvider(saveableKey) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onSizeChanged { size ->
+                                        val passWidth = measureWidthHolder.widthPx
+                                        if (
+                                            size.height > 0 &&
+                                            measuredHeightsPx[passWidth to ownerKey] != size.height
+                                        ) {
+                                            measuredHeightsPx[passWidth to ownerKey] = size.height
+                                        }
+                                    },
                             ) {
-                                MarkdownBlockItem(
-                                    index = index,
-                                    blocks = blocks,
-                                    style = style,
-                                    slots = slots,
-                                    inlineSlots = inlineSlots,
-                                    onLinkClick = onLinkClick,
-                                    onFootnoteClick = onFootnoteClick,
-                                    topLevelProseWidth = topLevelProseWidth,
-                                    footnoteMarkerWidth = footnoteMarkerWidths[index],
-                                )
+                                CompositionLocalProvider(
+                                    LocalMarkdownSelectionRetentionKey provides ownerKey,
+                                    LocalMarkdownPrecomputedLayouts provides precomputedLayouts,
+                                    LocalMarkdownPrecomputedTableWidths provides precomputedTableWidths,
+                                ) {
+                                    MarkdownBlockItem(
+                                        index = index,
+                                        blocks = blocks,
+                                        style = style,
+                                        slots = slots,
+                                        inlineSlots = inlineSlots,
+                                        onLinkClick = onLinkClick,
+                                        onFootnoteClick = onFootnoteClick,
+                                        topLevelProseWidth = topLevelProseWidth,
+                                        footnoteMarkerWidth = footnoteMarkerWidths[index],
+                                    )
+                                }
                             }
-                            }
+                        }
                     }
-                }.single().measure(childConstraints)
+                }
+                val placeable = subcompose(ownerKey, content).single().measure(childConstraints)
                 add(blockTops[index] to placeable)
             }
         }
@@ -608,6 +639,12 @@ private const val NearViewportMaterializationPerPass = 2
 // `AnchoredHeightCorrection` state: the block whose document position the reader is visually
 // anchored to, and that position at the previous measure pass. Deliberately NOT snapshot state —
 // it is read and written only inside the measure pass.
+// Width of the current measure pass, read by `MemoizedBlockContent` lambdas at callback time so
+// cached content never captures a per-pass value.
+private class MarkdownMeasureWidthHolder {
+    var widthPx: Int = 0
+}
+
 private class MarkdownScrollAnchor {
     var key: Any? = null
     var topPx: Int = 0
@@ -647,6 +684,7 @@ private fun MarkdownBlockItem(
     topLevelProseWidth: Dp?,
     footnoteMarkerWidth: Dp?,
 ) {
+    markdownTraceSection("MdScope:Item") {}
     val block = blocks[index]
     Column(Modifier.fillMaxWidth()) {
         markdownBlockSpacing(
