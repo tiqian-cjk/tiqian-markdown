@@ -88,7 +88,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import org.tiqian.compose.CjkText
+import org.tiqian.compose.material3.CjkText
 import org.tiqian.compose.ParagraphMeasurer
 import org.tiqian.compose.measure
 import org.tiqian.compose.toCjkTextStyle

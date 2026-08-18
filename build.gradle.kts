@@ -58,7 +58,7 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            api("org.tiqian:tiqian-compose:$tiqianDependencyVersion")
+            api("org.tiqian:tiqian-compose-material3:$tiqianDependencyVersion")
             api(compose.runtime)
             api(compose.ui)
             api(compose.components.resources)

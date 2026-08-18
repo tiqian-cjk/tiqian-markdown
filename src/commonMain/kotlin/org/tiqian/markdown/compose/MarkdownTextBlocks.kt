@@ -14,7 +14,7 @@ import org.tiqian.compose.CjkInlineObjectBoundary
 import org.tiqian.compose.CjkInlineObjectPreferredStretch
 import org.tiqian.compose.CjkInlineObjectPreferredStretchKind
 import org.tiqian.compose.CjkSelectionScope
-import org.tiqian.compose.CjkText
+import org.tiqian.compose.material3.CjkText
 import org.tiqian.compose.ParagraphMeasurer
 import org.tiqian.compose.rememberParagraphMeasurer
 import org.tiqian.core.ParagraphStyle
