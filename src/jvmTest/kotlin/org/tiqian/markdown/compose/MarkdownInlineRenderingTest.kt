@@ -236,6 +236,7 @@ class MarkdownInlineRenderingTest {
         assertEquals(0.dp, background.horizontalPadding)
         assertEquals(1.5.dp, background.verticalPadding)
         assertEquals(3.dp, background.cornerRadius)
+        assertEquals(3.dp, background.continuationCornerRadius)
         assertEquals(1.dp, background.adjacentSameStyleClearance)
         assertEquals(CjkInlineBackgroundMetricPolicy.SpanTextStyle, background.metricPolicy)
         assertEquals(
@@ -272,8 +273,13 @@ class MarkdownInlineRenderingTest {
         assertEquals(4.dp, background.horizontalPadding)
         assertEquals(3.dp, background.verticalPadding)
         assertEquals(3.dp, background.cornerRadius)
+        assertEquals(1.dp, background.continuationCornerRadius)
         assertEquals(1.dp, background.adjacentSameStyleClearance)
         assertEquals(CjkInlineBackgroundMetricPolicy.ParagraphTextStyle, background.metricPolicy)
+        assertEquals(
+            1.dp,
+            lowered.backgrounds.toCjkInlineBackgrounds().single().continuationCornerRadius,
+        )
         val layout = createPlatformParagraphMeasurer().measureWithInlineContent(
             text = lowered.annotated,
             constraints = LayoutConstraints(maxWidth = 240f),
@@ -332,6 +338,7 @@ class MarkdownInlineRenderingTest {
         assertEquals(style.keyboardInputHorizontalPadding, box.horizontalPadding)
         assertEquals(style.keyboardInputVerticalPadding, box.verticalPadding)
         assertEquals(style.keyboardInputCornerRadius, box.cornerRadius)
+        assertEquals(style.keyboardInputCornerRadius, box.continuationCornerRadius)
         assertEquals(
             CjkInlineBackgroundDrawStyle.Border(style.keyboardInputBorderWidth),
             box.drawStyle,
@@ -376,6 +383,7 @@ class MarkdownInlineRenderingTest {
         val lowered = assertNotNull(resolved)
         assertEquals(Color.Unspecified, lowered.annotated.spanStyles.single().item.background)
         assertEquals(1, lowered.backgrounds.size)
+        assertEquals(1.dp, lowered.backgrounds.single().continuationCornerRadius)
         val layout = createPlatformParagraphMeasurer().measureWithInlineContent(
             text = lowered.annotated,
             constraints = LayoutConstraints(maxWidth = 240f),

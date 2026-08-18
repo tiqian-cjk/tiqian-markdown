@@ -173,6 +173,7 @@ internal data class ResolvedInlineBackground(
     val horizontalPadding: Dp,
     val verticalPadding: Dp,
     val cornerRadius: Dp,
+    val continuationCornerRadius: Dp = cornerRadius,
     val adjacentSameStyleClearance: Dp,
     val drawStyle: CjkInlineBackgroundDrawStyle = CjkInlineBackgroundDrawStyle.Fill,
     val metricPolicy: CjkInlineBackgroundMetricPolicy = CjkInlineBackgroundMetricPolicy.SpanTextStyle,
@@ -186,6 +187,7 @@ internal fun List<ResolvedInlineBackground>.toCjkInlineBackgrounds(): List<CjkIn
             horizontalPadding = resolved.horizontalPadding,
             verticalPadding = resolved.verticalPadding,
             cornerRadius = resolved.cornerRadius,
+            continuationCornerRadius = resolved.continuationCornerRadius,
             adjacentSameStyleClearance = resolved.adjacentSameStyleClearance,
             drawStyle = resolved.drawStyle,
             metricPolicy = resolved.metricPolicy,
@@ -440,6 +442,7 @@ private fun buildResolvedMarkdownText(
                     horizontalPadding = style.inlineCodeHorizontalPadding,
                     verticalPadding = style.inlineCodeVerticalPadding,
                     cornerRadius = style.inlineCodeCornerRadius,
+                    continuationCornerRadius = style.inlineCodeContinuationCornerRadius,
                     adjacentSameStyleClearance = style.adjacentSameStyleClearance,
                     metricPolicy = CjkInlineBackgroundMetricPolicy.ParagraphTextStyle,
                 )

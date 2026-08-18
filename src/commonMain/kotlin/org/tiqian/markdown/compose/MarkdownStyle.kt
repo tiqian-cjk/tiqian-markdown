@@ -181,6 +181,8 @@ data class MarkdownStyle(
     val inlineCodeHorizontalPadding: Dp = 4.dp,
     val inlineCodeVerticalPadding: Dp = 3.dp,
     val inlineCodeCornerRadius: Dp = 3.dp,
+    /** Radius on the side where one inline-code box continues across a visual line break. */
+    val inlineCodeContinuationCornerRadius: Dp = 1.dp,
     val highlight: SpanStyle = SpanStyle(background = Color(0xFFFFE58F)),
     val highlightVerticalPadding: Dp = 3.dp,
     val highlightCornerRadius: Dp = 3.dp,

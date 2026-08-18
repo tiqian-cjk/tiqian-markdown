@@ -71,6 +71,12 @@ the source alternate text remains in the paragraph instead. Host dashed and dott
 lower into Tiqian's normal underline role, so they share the final source boundaries, glue trim,
 underline position and skip-ink geometry.
 
+Inline-code backgrounds lower both their true-end radius and their visual-line continuation radius
+to Tiqian's background geometry. The default keeps a `3dp` radius at the two source endpoints and
+uses `1dp` only on a side created by wrapping; highlights and other generic backgrounds keep their
+authored radius on every fragment unless the host explicitly supplies a different continuation
+radius.
+
 Heading geometry is derived from the body style rather than stored as six unrelated absolute sizes.
 `MarkdownHeadingScales` controls each level's body-size multiplier and line-height ratio; the six
 heading `TextStyle` values remain full visual overrides for weight, family, colour, decoration, or an
