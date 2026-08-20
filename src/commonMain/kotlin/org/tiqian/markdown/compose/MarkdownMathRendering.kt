@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
@@ -84,9 +85,15 @@ data class MarkdownMathStyle(
     val displayFontSize: TextUnit = TextUnit.Unspecified,
     val displayScale: Float = 1f,
     val blockCornerRadius: Dp = 8.dp,
+    /**
+     * Host-owned horizontal article inset. Overflowing display math consumes it as viewport
+     * outset, then restores the same inset at both ends of the scroll content.
+     */
+    val displayScrollHostInset: Dp = 0.dp,
 ) {
     init {
         require(displayScale > 0f) { "displayScale must be positive" }
+        require(displayScrollHostInset >= 0.dp) { "displayScrollHostInset must not be negative" }
     }
 }
 
@@ -370,14 +377,17 @@ fun DefaultMarkdownMathBlock(
         baseFontSize
     }
     val color = resolveMathColor(style.math.color, style.body.color, Color.Black)
+    val displayViewportModifier = Modifier.displayMathScrollViewportOutset(
+        style.math.displayScrollHostInset,
+    )
     val containerModifier = if (style.mathBackground.isSpecified) {
-        Modifier
+        displayViewportModifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(style.math.blockCornerRadius))
             .background(style.mathBackground)
             .padding(style.codePadding)
     } else {
-        Modifier.fillMaxWidth()
+        displayViewportModifier.fillMaxWidth()
     }
     BoxWithConstraints(modifier = containerModifier) {
         val viewportWidth = maxWidth
@@ -388,15 +398,42 @@ fun DefaultMarkdownMathBlock(
                 modifier = Modifier.widthIn(min = viewportWidth),
                 contentAlignment = Alignment.Center,
             ) {
-                TiqianMath(
-                    source = expression,
-                    mode = MathMode.Display,
-                    style = TextStyle(fontSize = fontSize, color = color),
-                    softWrap = false,
-                    fontFace = fontFace,
-                    textRunProvider = textRunProvider,
-                    textLocale = MarkdownMathTextLocale,
-                )
+                Box(Modifier.padding(horizontal = style.math.displayScrollHostInset)) {
+                    TiqianMath(
+                        source = expression,
+                        mode = MathMode.Display,
+                        style = TextStyle(fontSize = fontSize, color = color),
+                        softWrap = false,
+                        fontFace = fontFace,
+                        textRunProvider = textRunProvider,
+                        textLocale = MarkdownMathTextLocale,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Lets the scroll viewport consume a host-owned article inset without changing the width reported
+ * to the surrounding prose layout. The formula keeps its normal centered position when it fits;
+ * only the viewport and available scroll reveal area extend outwards.
+ */
+private fun Modifier.displayMathScrollViewportOutset(outset: Dp): Modifier = if (outset <= 0.dp) {
+    this
+} else {
+    layout { measurable, constraints ->
+        if (!constraints.hasBoundedWidth) {
+            val placeable = measurable.measure(constraints)
+            layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+        } else {
+            val outsetPx = outset.roundToPx().coerceAtMost(constraints.maxWidth / 2)
+            val expandedWidth = constraints.maxWidth + outsetPx * 2
+            val placeable = measurable.measure(
+                constraints.copy(minWidth = expandedWidth, maxWidth = expandedWidth),
+            )
+            layout(constraints.maxWidth, placeable.height) {
+                placeable.placeRelative(-outsetPx, 0)
             }
         }
     }
