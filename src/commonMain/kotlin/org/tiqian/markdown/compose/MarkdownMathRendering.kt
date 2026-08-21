@@ -5,13 +5,9 @@ import org.tiqian.markdown.MarkdownTextMark
 import org.tiqian.markdown.MarkdownTextRange
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
@@ -21,7 +17,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -389,28 +384,18 @@ fun DefaultMarkdownMathBlock(
     } else {
         displayViewportModifier.fillMaxWidth()
     }
-    BoxWithConstraints(modifier = containerModifier) {
-        val viewportWidth = maxWidth
-        Box(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        ) {
-            Box(
-                modifier = Modifier.widthIn(min = viewportWidth),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(Modifier.padding(horizontal = style.math.displayScrollHostInset)) {
-                    TiqianMath(
-                        source = expression,
-                        mode = MathMode.Display,
-                        style = TextStyle(fontSize = fontSize, color = color),
-                        softWrap = false,
-                        fontFace = fontFace,
-                        textRunProvider = textRunProvider,
-                        textLocale = MarkdownMathTextLocale,
-                    )
-                }
-            }
-        }
+    Box(modifier = containerModifier) {
+        TiqianMath(
+            source = expression,
+            modifier = Modifier.fillMaxWidth(),
+            mode = MathMode.Display,
+            style = TextStyle(fontSize = fontSize, color = color),
+            softWrap = true,
+            fontFace = fontFace,
+            textRunProvider = textRunProvider,
+            textLocale = MarkdownMathTextLocale,
+            displayHorizontalContentInset = style.math.displayScrollHostInset,
+        )
     }
 }
 
