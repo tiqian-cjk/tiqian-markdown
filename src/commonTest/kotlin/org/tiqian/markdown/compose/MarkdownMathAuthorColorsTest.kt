@@ -150,4 +150,49 @@ class MarkdownMathAuthorColorsTest {
         assertTrue(contrast(adapted, darkFill) > contrast(gray, darkFill))
     }
 
+    @Test
+    fun harmonizeRotatesAuthorHueTowardTargetCappedAt15Degrees() {
+        val target = 0xFF3050FF.toInt() // a blue "theme primary"
+        val author = 0xFFCC0000.toInt() // red, far from blue in hue
+        val harmonized = harmonizeHueTowards(author, target)
+        val before = oklchHueDeltaDegrees(author, target)
+        val after = oklchHueDeltaDegrees(harmonized, target)
+        assertTrue(after < before, "hue must move toward the target ($before -> $after)")
+        assertTrue(before - after <= 15.0 + 1e-6, "rotation is capped at 15°, moved ${before - after}")
+    }
+
+    @Test
+    fun harmonizeLeavesAchromaticColorsAlone() {
+        val target = 0xFF3050FF.toInt()
+        val gray = 0xFF808080.toInt()
+        assertEquals(gray, harmonizeHueTowards(gray, target), "a gray's noise hue must not be rotated")
+    }
+
+    @Test
+    fun m3AdapterHarmonizesAuthorColorButNotInheritedContent() {
+        val primary = 0xFF3050FF.toInt()
+        val adapter = markdownMathAuthorColorAdapter(harmonizeTowardArgb = primary)
+        val white = 0xFFFFFFFF.toInt()
+        // On a white backdrop the flip/floor are identity, so any change is the harmonize alone.
+        val author = 0xFFCC0000.toInt()
+        assertTrue(
+            adapter.adapt(author, MathAuthorColorRole.Foreground, white) != author,
+            "author color must be harmonized toward the primary",
+        )
+        assertEquals(
+            white,
+            adapter.adapt(white, MathAuthorColorRole.InheritedOnAuthorBackground, white),
+            "theme-inherited content is never harmonized",
+        )
+    }
+
+    @Test
+    fun m3AdapterIsValueEqualOnItsTarget() {
+        assertEquals(
+            markdownMathAuthorColorAdapter(0xFF3050FF.toInt()),
+            markdownMathAuthorColorAdapter(0xFF3050FF.toInt()),
+            "equal targets must produce equal adapters so MarkdownMathStyle keys stay stable",
+        )
+    }
+
 }

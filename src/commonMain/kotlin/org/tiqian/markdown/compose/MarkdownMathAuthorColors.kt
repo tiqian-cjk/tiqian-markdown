@@ -2,9 +2,11 @@ package org.tiqian.markdown.compose
 
 import org.tiqian.math.layout.MathAuthorColorAdapter
 import org.tiqian.math.layout.MathAuthorColorRole
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -42,6 +44,55 @@ fun markdownDefaultMathAuthorColorAdapter(): MathAuthorColorAdapter = MarkdownDe
 /** Stable singleton so [MarkdownMathStyle] equality (hence composition keys) stays byte-stable. */
 private val MarkdownDefaultMathAuthorColorAdapter = MathAuthorColorAdapter { authorArgb, role, backdropArgb ->
     adaptAuthorColor(authorArgb, role, backdropArgb)
+}
+
+/**
+ * The Markdown default adapter with a harmonize pre-stage: author colors are first rotated toward
+ * [harmonizeTowardArgb] (the theme primary) before the flip + contrast floor. Harmonizing is
+ * Markdown's own stage — the Material 3 mapping supplies the theme primary, so hosts pass nothing.
+ * Theme-inherited content already wears the theme color and is never harmonized. Value-equal on the
+ * target so [MarkdownMathStyle] equality (hence composition keys) stays stable.
+ */
+fun markdownMathAuthorColorAdapter(harmonizeTowardArgb: Int): MathAuthorColorAdapter =
+    HarmonizingMarkdownMathAuthorColorAdapter(harmonizeTowardArgb)
+
+private class HarmonizingMarkdownMathAuthorColorAdapter(private val targetArgb: Int) : MathAuthorColorAdapter {
+    override fun adapt(authorArgb: Int, role: MathAuthorColorRole, backdropArgb: Int): Int {
+        val harmonized = if (role == MathAuthorColorRole.InheritedOnAuthorBackground) {
+            authorArgb
+        } else {
+            harmonizeHueTowards(authorArgb, targetArgb)
+        }
+        return adaptAuthorColor(harmonized, role, backdropArgb)
+    }
+
+    override fun equals(other: Any?): Boolean =
+        other is HarmonizingMarkdownMathAuthorColorAdapter && other.targetArgb == targetArgb
+
+    override fun hashCode(): Int = targetArgb
+}
+
+/** Below this OKLab chroma a color is achromatic: its hue is noise, so harmonize leaves it alone. */
+private const val HarmonizeAchromaticChroma = 0.02
+private const val HarmonizeMaxRadians = 15.0 * PI / 180.0
+
+/**
+ * AuthorColorHarmonizeTowardTheme: rotate an author color's OKLCH hue toward [targetArgb] by half the
+ * shortest arc, capped at 15°, keeping lightness/chroma/alpha. Near-achromatic author or target
+ * colors are returned verbatim — rotating a gray's noise hue would tint it.
+ */
+internal fun harmonizeHueTowards(authorArgb: Int, targetArgb: Int): Int {
+    val author = argbToOklch(authorArgb)
+    val target = argbToOklch(targetArgb)
+    if (author.chroma < HarmonizeAchromaticChroma || target.chroma < HarmonizeAchromaticChroma) {
+        return authorArgb
+    }
+    var delta = target.hue - author.hue
+    while (delta > PI) delta -= 2.0 * PI
+    while (delta < -PI) delta += 2.0 * PI
+    val rotation = min(abs(delta) / 2.0, HarmonizeMaxRadians) * if (delta < 0.0) -1.0 else 1.0
+    val alpha = authorArgb ushr 24 and 0xff
+    return oklchToArgb(author.lightness, author.chroma, author.hue + rotation, alpha)
 }
 
 /** Below this theme distance a light theme is treated as white: no flip and no forced contrast. */
