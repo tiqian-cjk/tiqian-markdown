@@ -68,6 +68,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.AlignmentLine
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.FirstBaseline
@@ -300,17 +303,29 @@ internal fun MarkdownBlock(
                 onFootnoteClick,
             )
         }
-        is MarkdownBlockQuote -> Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        is MarkdownBlockQuote -> {
             val quoteStyle = remember(style) { style.quoteContentStyle() }
-            Spacer(
-                Modifier
-                    .width(style.quoteBarWidth)
-                    .fillMaxHeight()
-                    .background(style.quoteBarColor),
-            )
+            val barWidth = style.quoteBarWidth
+            val barColor = style.quoteBarColor
+            // The bar is decoration drawn at the row's final height instead of an
+            // IntrinsicSize.Min sibling: intrinsic measurement is forbidden over
+            // subcompose-backed content (display math, tables), which quotes may contain.
+            Row(
+                Modifier.fillMaxWidth().drawBehind {
+                    val widthPx = barWidth.toPx()
+                    val x = if (layoutDirection == LayoutDirection.Rtl) size.width - widthPx else 0f
+                    drawRect(
+                        color = barColor,
+                        topLeft = Offset(x, 0f),
+                        size = Size(widthPx, size.height),
+                    )
+                },
+            ) {
             MarkdownBlocks(
                 blocks = block.blocks,
-                modifier = Modifier.weight(1f).padding(start = style.quoteContentPadding),
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = barWidth + style.quoteContentPadding),
                 style = quoteStyle,
                 slots = slots,
                 inlineSlots = inlineSlots,
@@ -318,6 +333,7 @@ internal fun MarkdownBlock(
                 onFootnoteClick = onFootnoteClick,
                 compact = true,
             )
+            }
         }
 
         is MarkdownList -> MarkdownListBlock(
