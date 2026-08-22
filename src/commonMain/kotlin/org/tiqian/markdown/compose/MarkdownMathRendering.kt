@@ -48,6 +48,7 @@ import org.tiqian.math.core.MathAtomClass
 import org.tiqian.math.core.MathBreakKind
 import org.tiqian.math.core.MathInlineFragment
 import org.tiqian.math.core.MathMode
+import org.tiqian.math.layout.MathAuthorColorAdapter
 import org.tiqian.math.layout.MathComposeFontFace
 import org.tiqian.math.layout.MathTextRunProvider
 
@@ -85,6 +86,10 @@ data class MarkdownMathStyle(
      * outset, then restores the same inset at both ends of the scroll content.
      */
     val displayScrollHostInset: Dp = 0.dp,
+    /** Effective page color behind formulas; when specified, author TeX colors adapt to the theme. */
+    val authorColorBackdrop: Color = Color.Unspecified,
+    /** Overrides the built-in adapter; null with a specified backdrop uses the Markdown default. */
+    val authorColorAdapter: MathAuthorColorAdapter? = null,
 ) {
     init {
         require(displayScale > 0f) { "displayScale must be positive" }
@@ -183,6 +188,13 @@ internal fun prepareDefaultMarkdownInlineMath(
     )
     val color = resolveMathColor(style.math.color, hostTextStyle.color, style.body.color)
     val fontSizePx = with(density) { fontSize.toPx() }
+    // Inline math has no mathBackground block, so the backdrop is the style-declared page color.
+    val backdrop = style.math.authorColorBackdrop
+    val adapter = if (backdrop.isSpecified) {
+        style.math.authorColorAdapter ?: markdownDefaultMathAuthorColorAdapter()
+    } else {
+        style.math.authorColorAdapter
+    }
     val formula = preparer.prepare(
         source = expression,
         mode = MathMode.Inline,
@@ -193,6 +205,8 @@ internal fun prepareDefaultMarkdownInlineMath(
         },
         color = color,
         textLocale = MarkdownMathTextLocale,
+        authorColorAdapter = adapter,
+        authorColorBackdrop = backdrop,
     )
     val layout = formula.layoutResult ?: return null
     val sourceRanges = layout.partitionSource(expression)
@@ -384,6 +398,18 @@ fun DefaultMarkdownMathBlock(
     } else {
         displayViewportModifier.fillMaxWidth()
     }
+    // A block background, when present, is what the author colors actually sit on; otherwise the
+    // page backdrop declared on the math style governs adaptation.
+    val backdrop = if (style.mathBackground.isSpecified) {
+        style.mathBackground
+    } else {
+        style.math.authorColorBackdrop
+    }
+    val adapter = if (backdrop.isSpecified) {
+        style.math.authorColorAdapter ?: markdownDefaultMathAuthorColorAdapter()
+    } else {
+        style.math.authorColorAdapter
+    }
     Box(modifier = containerModifier) {
         TiqianMath(
             source = expression,
@@ -395,6 +421,8 @@ fun DefaultMarkdownMathBlock(
             textRunProvider = textRunProvider,
             textLocale = MarkdownMathTextLocale,
             displayHorizontalContentInset = style.math.displayScrollHostInset,
+            authorColorAdapter = adapter,
+            authorColorBackdrop = backdrop,
         )
     }
 }

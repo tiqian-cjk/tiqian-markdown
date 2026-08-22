@@ -58,6 +58,8 @@ class MaterialMarkdownStyleTest {
         assertEquals(colors.surfaceContainerLow, mapped.tableHeaderBackground)
         assertEquals(Dp.Hairline, mapped.imageOutlineWidth)
         assertEquals(colors.outline.copy(alpha = 0.15f), mapped.imageOutlineColor)
+        // Author TeX colors adapt against the surface the body text sits on, so dark themes are legible.
+        assertEquals(colors.surface, mapped.math.authorColorBackdrop)
 
         with(mapped.codeHighlight) {
             assertEquals(colors.outline, comment.color)

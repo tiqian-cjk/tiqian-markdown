@@ -65,7 +65,8 @@ kotlin {
             implementation(compose.foundation)
             implementation(compose.material3)
             implementation("org.jetbrains.compose.ui:ui-backhandler:1.11.1")
-            implementation("org.tiqian:math-compose:$tiqianDependencyVersion")
+            // MarkdownMathStyle exposes MathAuthorColorAdapter, so the math suite is API surface.
+            api("org.tiqian:math-compose:$tiqianDependencyVersion")
             implementation("org.tiqian:tiqian-font:$tiqianDependencyVersion")
             implementation("com.gallatinapps.syntaxmp:syntaxmp-tokenizer:0.3.0")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")

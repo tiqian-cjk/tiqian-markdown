@@ -100,6 +100,10 @@ internal fun MarkdownStyle.mapMaterial3(
             markup = codeHighlight.markup.copy(color = colorScheme.onSurface),
         ),
         mathBackground = Color.Unspecified,
+        // Markdown body sits on the M3 surface (onSurface text), so author TeX colors adapt against
+        // surface by default. Without a backdrop the adapter is a no-op, leaving author \color/\bbox
+        // unadapted — and often unreadable — on dark themes.
+        math = math.copy(authorColorBackdrop = colorScheme.surface),
         tableBorderColor = colorScheme.outlineVariant,
         tableHeaderBackground = colorScheme.surfaceContainerLow,
         tableText = tableText.copy(color = colorScheme.onSurface),
