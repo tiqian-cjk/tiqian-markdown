@@ -1,0 +1,65 @@
+name: Publish Tiqian Markdown Maven snapshots
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Maven SNAPSHOT version (also resolves upstream tiqian/math snapshots)
+        required: true
+        default: 0.1.0-SNAPSHOT
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-tiqian-markdown-maven-snapshots
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      TIQIAN_VERSION: ${{ inputs.version }}
+      TIQIAN_DEPENDENCY_VERSION: ${{ inputs.version }}
+      MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+      MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+    steps:
+      - name: Check out Tiqian Markdown
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Validate snapshot inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$TIQIAN_VERSION" != *-SNAPSHOT ]]; then
+            echo "The Central snapshot repository only accepts -SNAPSHOT versions." >&2
+            exit 1
+          fi
+          for variable in MAVEN_CENTRAL_USERNAME MAVEN_CENTRAL_PASSWORD; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "Required secret $variable is missing." >&2
+              exit 1
+            fi
+          done
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+
+      - name: Verify tests against upstream snapshots
+        run: |
+          ./gradlew jvmTest compileAndroidMain \
+            -PtiqianRepository="https://central.sonatype.com/repository/maven-snapshots/" \
+            --no-daemon
+
+      - name: Upload Tiqian Markdown snapshot module
+        run: |
+          ./gradlew publishAllPublicationsToCentralSnapshotsRepository \
+            -PtiqianRepository="https://central.sonatype.com/repository/maven-snapshots/" \
+            --no-daemon
