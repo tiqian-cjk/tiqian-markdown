@@ -67,7 +67,7 @@ kotlin {
             implementation("org.jetbrains.compose.ui:ui-backhandler:1.11.1")
             // MarkdownMathStyle exposes MathAuthorColorAdapter, so the math suite is API surface.
             api("org.tiqian:math-compose:$tiqianDependencyVersion")
-            implementation("org.tiqian:tiqian-font:$tiqianDependencyVersion")
+            implementation("org.tiqian:tiqian-engine:$tiqianDependencyVersion")
             implementation("com.gallatinapps.syntaxmp:syntaxmp-tokenizer:0.3.0")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
         }
@@ -79,11 +79,11 @@ kotlin {
 
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
-            implementation("org.tiqian:tiqian-shaping-skia:$tiqianDependencyVersion")
+            implementation("org.tiqian:tiqian-jvm-skia:$tiqianDependencyVersion")
         }
 
         androidMain.dependencies {
-            implementation("org.tiqian:tiqian-shaping-android-adapter:$tiqianDependencyVersion")
+            implementation("org.tiqian:tiqian-android-shaping:$tiqianDependencyVersion")
             implementation("androidx.core:core-ktx:1.19.0")
         }
 
@@ -115,6 +115,18 @@ publishing {
         maven {
             name = "central"
             url = uri("https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/")
+            credentials {
+                username = providers.gradleProperty("mavenCentralUsername")
+                    .orElse(providers.environmentVariable("MAVEN_CENTRAL_USERNAME"))
+                    .orNull
+                password = providers.gradleProperty("mavenCentralPassword")
+                    .orElse(providers.environmentVariable("MAVEN_CENTRAL_PASSWORD"))
+                    .orNull
+            }
+        }
+        maven {
+            name = "centralSnapshots"
+            url = uri("https://central.sonatype.com/repository/maven-snapshots/")
             credentials {
                 username = providers.gradleProperty("mavenCentralUsername")
                     .orElse(providers.environmentVariable("MAVEN_CENTRAL_USERNAME"))

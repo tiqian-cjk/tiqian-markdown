@@ -10,16 +10,11 @@ version = sys.argv[2]
 namespace = {"m": "http://maven.apache.org/POM/4.0.0"}
 
 expected = {
-    ("org.tiqian", "tiqian-core"),
-    ("org.tiqian", "tiqian-font"),
-    ("org.tiqian", "tiqian-linebreak"),
-    ("org.tiqian", "tiqian-clreq"),
-    ("org.tiqian", "tiqian-layout"),
-    ("org.tiqian", "tiqian-shaping-api"),
-    ("org.tiqian", "tiqian-shaping-jvm"),
-    ("org.tiqian", "tiqian-shaping-skia"),
-    ("org.tiqian", "tiqian-shaping-android-adapter"),
-    ("org.tiqian", "tiqian-shaping-android-native-font"),
+    ("org.tiqian", "tiqian-engine"),
+    ("org.tiqian", "tiqian-jvm-shaping"),
+    ("org.tiqian", "tiqian-jvm-skia"),
+    ("org.tiqian", "tiqian-android-shaping"),
+    ("org.tiqian", "tiqian-android-native-font"),
     ("org.tiqian", "tiqian-compose"),
     ("org.tiqian", "tiqian-compose-material3"),
     ("org.tiqian", "markdown-compose"),
