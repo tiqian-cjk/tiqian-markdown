@@ -438,7 +438,9 @@ class MarkdownInlineRenderingTest {
             inlineBackgrounds = lowered.backgrounds.toCjkInlineBackgrounds(),
         )
         val technicalRanges = layout.debug.breakOpportunityDecisions.map { it.range }.toSet()
-        assertTrue(TextRange(10, 14) in technicalRanges)
+        // LinkAddressDisplayGate: "link" is prose display text, not the address itself,
+        // so it keeps normal prose breaking alongside footnote and custom clicks.
+        assertTrue(TextRange(10, 14) !in technicalRanges)
         assertTrue(TextRange(1, 4) !in technicalRanges)
         assertTrue(TextRange(5, 9) !in technicalRanges)
     }
