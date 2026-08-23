@@ -18,15 +18,12 @@ expected = {
     ("org.tiqian", "tiqian-compose"),
     ("org.tiqian", "tiqian-compose-material3"),
     ("org.tiqian", "markdown-compose"),
-    ("org.tiqian", "math-core"),
-    ("org.tiqian", "math-parser"),
-    ("org.tiqian", "math-font-opentype"),
+    ("org.tiqian", "math-engine"),
     ("org.tiqian", "math-font-stix"),
     ("org.tiqian", "math-font-tooling"),
     ("org.tiqian", "math-gradle-plugin"),
-    ("org.tiqian", "math-font-android"),
-    ("org.tiqian", "math-font-skia"),
-    ("org.tiqian", "math-layout"),
+    ("org.tiqian", "math-android-font"),
+    ("org.tiqian", "math-jvm-skia"),
     ("org.tiqian", "math-compose"),
 }
 
