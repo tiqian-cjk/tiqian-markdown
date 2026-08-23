@@ -49,6 +49,16 @@ jobs:
           distribution: temurin
           java-version: "25"
 
+      - name: Install deterministic JVM test font
+        run: |
+          mkdir -p "$HOME/.local/share/fonts" "$HOME/.config/fontconfig"
+          install -m 0644 \
+            src/jvmTest/resources/fonts/SourceHanSansCN-Regular.otf \
+            "$HOME/.local/share/fonts/SourceHanSansCN-Regular.otf"
+          install -m 0644 \
+            .github/fontconfig/markdown-compose-tests.conf \
+            "$HOME/.config/fontconfig/fonts.conf"
+
       - name: Accept Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
 
