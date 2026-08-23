@@ -7,6 +7,7 @@ import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 
@@ -109,6 +110,12 @@ internal fun MarkdownStyle.mapMaterial3(
             authorColorBackdrop = colorScheme.surface,
             authorColorAdapter = math.authorColorAdapter
                 ?: markdownMathAuthorColorAdapter(harmonizeTowardArgb = colorScheme.primary.toArgb()),
+            // Equation tags are navigation labels, not formula content: the caption tier.
+            equationTagColor = if (math.equationTagColor.isSpecified) {
+                math.equationTagColor
+            } else {
+                colorScheme.outline
+            },
         ),
         tableBorderColor = colorScheme.outlineVariant,
         tableHeaderBackground = colorScheme.surfaceContainerLow,

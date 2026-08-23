@@ -86,6 +86,8 @@ data class MarkdownMathStyle(
      * outset, then restores the same inset at both ends of the scroll content.
      */
     val displayScrollHostInset: Dp = 0.dp,
+    /** Paints `\tag` equation labels; unspecified inherits the formula color. */
+    val equationTagColor: Color = Color.Unspecified,
     /** Effective page color behind formulas; when specified, author TeX colors adapt to the theme. */
     val authorColorBackdrop: Color = Color.Unspecified,
     /** Overrides the built-in adapter; null with a specified backdrop uses the Markdown default. */
@@ -421,6 +423,7 @@ fun DefaultMarkdownMathBlock(
             textRunProvider = textRunProvider,
             textLocale = MarkdownMathTextLocale,
             displayHorizontalContentInset = style.math.displayScrollHostInset,
+            displayEquationTagColor = style.math.equationTagColor,
             authorColorAdapter = adapter,
             authorColorBackdrop = backdrop,
         )
