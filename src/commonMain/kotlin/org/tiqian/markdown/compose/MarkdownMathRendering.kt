@@ -201,6 +201,7 @@ internal fun prepareDefaultMarkdownInlineMath(
         source = expression,
         mode = MathMode.Inline,
         fontSizePx = fontSizePx,
+        density = density,
         fontWeight = hostTextStyle.fontWeight?.weight ?: 400,
         requestedLineHeightPx = hostTextStyle.lineHeight.takeIf { it != TextUnit.Unspecified }?.let {
             with(density) { it.toPx() }
