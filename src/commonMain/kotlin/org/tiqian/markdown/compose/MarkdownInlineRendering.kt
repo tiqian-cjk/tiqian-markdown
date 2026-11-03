@@ -11,6 +11,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
@@ -35,6 +36,7 @@ import org.tiqian.compose.CjkInlineBackgroundMetricPolicy
 import org.tiqian.compose.CjkInlineDecoration
 import org.tiqian.compose.CjkInlineDecorationStyle
 import org.tiqian.compose.addCjkInteractionOnlyAnnotation
+import org.tiqian.compose.addCjkRenderOnlyInlineObject
 import org.tiqian.compose.addCjkInlineAttachment
 import org.tiqian.compose.addTechnicalInlineAnnotation
 import org.tiqian.core.InlineAttachment
@@ -128,7 +130,25 @@ data class MarkdownCustomInlinePresentation(
     val decoration: MarkdownInlineDecoration? = null,
     val onClick: ((text: String) -> Unit)? = null,
     val accessibilityLabel: ((text: String) -> String)? = null,
+    /** 在范围末端之后真实占据行内空间；内部排版占位不进入逻辑文本、复制或选择索引。 */
+    val endMarker: MarkdownInlineEndMarker? = null,
 )
+
+/** 宿主提供的行内末端标记；由 CjkInlineObject 度量并参与断行。 */
+data class MarkdownInlineEndMarker(
+    val painter: Painter,
+    val color: Color,
+    val size: Dp = 8.dp,
+    val gap: Dp = 3.dp,
+    /** 标记相对行基线的上移距离。 */
+    val offset: Dp = 2.dp,
+) {
+    init {
+        require(size.value.isFinite() && size.value > 0f)
+        require(gap.value.isFinite() && gap.value >= 0f)
+        require(offset.value.isFinite() && (size + offset).value >= 0f)
+    }
+}
 
 sealed interface MarkdownInlineDecoration {
     data class DashedUnderline(
@@ -152,6 +172,9 @@ internal data class ResolvedMarkdownText(
     val backgrounds: List<ResolvedInlineBackground>,
     val decorations: List<ResolvedInlineDecoration>,
     val interactions: List<ResolvedInlineInteraction>,
+    /** Source range edges into raw LayoutResult coordinates: starts skip inserted slots, ends stop before them. */
+    val sourceToRenderedOffset: (Int, Boolean) -> Int,
+    val endMarkers: List<ResolvedInlineEndMarker> = emptyList(),
 )
 
 internal data class ResolvedTiqianInlineObject(
@@ -164,6 +187,11 @@ internal data class ResolvedInlineDecoration(
     val start: Int,
     val endExclusive: Int,
     val decoration: MarkdownInlineDecoration,
+)
+
+internal data class ResolvedInlineEndMarker(
+    val endExclusive: Int,
+    val marker: MarkdownInlineEndMarker,
 )
 
 internal data class ResolvedInlineBackground(
@@ -429,6 +457,7 @@ private fun buildResolvedMarkdownText(
     val base = text.buildInlineBase(nonOverlappingReplacements)
     val backgrounds = mutableListOf<ResolvedInlineBackground>()
     val decorations = mutableListOf<ResolvedInlineDecoration>()
+    val endMarkers = mutableListOf<ResolvedInlineEndMarker>()
     val interactions = mutableListOf<ResolvedInlineInteraction>()
     val annotated = AnnotatedString.Builder(base).apply {
         fun addRendererOwnedInlineCode(start: Int, end: Int) {
@@ -604,6 +633,9 @@ private fun buildResolvedMarkdownText(
                     presentation.decoration?.let { decoration ->
                         decorations += ResolvedInlineDecoration(start, end, decoration)
                     }
+                    presentation.endMarker?.let { marker ->
+                        endMarkers += ResolvedInlineEndMarker(end, marker)
+                    }
                 }
             }
         }
@@ -635,7 +667,9 @@ private fun buildResolvedMarkdownText(
         backgrounds = backgrounds,
         decorations = decorations,
         interactions = interactions,
-    )
+        sourceToRenderedOffset = { offset, end -> mapOffset(offset, nonOverlappingReplacements, end) },
+        endMarkers = endMarkers,
+    ).withInlineEndMarkerProjection()
 }
 
 private fun MarkdownText.buildInlineBase(replacements: List<InlineReplacement>): AnnotatedString {
@@ -720,4 +754,32 @@ internal fun Modifier.markdownInlineInteractionSemantics(
             }
         }
     }
+}
+
+/** Insert slots only into the renderer projection; MarkdownText.value and source spans stay intact. */
+private fun ResolvedMarkdownText.withInlineEndMarkerProjection(): ResolvedMarkdownText {
+    if (endMarkers.isEmpty()) return this
+    val ordered = endMarkers.sortedBy { it.endExclusive }
+    // A range start follows slots at that boundary; a range end excludes those same slots.
+    fun map(offset: Int, after: Boolean) = offset + ordered.count { it.endExclusive < offset || after && it.endExclusive == offset }
+    val sourceToBaseOffset = sourceToRenderedOffset
+    val output = AnnotatedString.Builder()
+    var cursor = 0
+    val markers = ordered.map { marker ->
+        output.append(annotated.subSequence(cursor, marker.endExclusive))
+        val start = output.length
+        output.append('￼')
+        output.addCjkRenderOnlyInlineObject(start, start + 1)
+        cursor = marker.endExclusive
+        marker.copy(endExclusive = start + 1)
+    }
+    output.append(annotated.subSequence(cursor, annotated.length))
+    return copy(
+        annotated = output.toAnnotatedString(),
+        tiqianInlineObjects = tiqianInlineObjects.map { it.copy(start = map(it.start, true), endExclusive = map(it.endExclusive, false)) },
+        backgrounds = backgrounds.map { it.copy(start = map(it.start, true), endExclusive = map(it.endExclusive, false)) },
+        decorations = decorations.map { it.copy(start = map(it.start, true), endExclusive = map(it.endExclusive, false)) },
+        sourceToRenderedOffset = { offset, end -> map(sourceToBaseOffset(offset, end), after = !end) },
+        endMarkers = markers,
+    )
 }

@@ -6,7 +6,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import org.tiqian.compose.CjkInlineObject
@@ -88,7 +98,7 @@ internal fun MarkdownTextBlock(
         preparedInlineMath = precomputed?.preparedInlineMath.orEmpty(),
     )
     val density = LocalDensity.current
-    val tiqianInlineObjects = remember(resolved.tiqianInlineObjects, density) {
+    val tiqianInlineObjects = remember(resolved.tiqianInlineObjects, resolved.endMarkers, density) {
         resolved.toCjkInlineObjects(density)
     }
     val inlineDecorations = remember(resolved.decorations) {
@@ -97,7 +107,8 @@ internal fun MarkdownTextBlock(
     val inlineBackgrounds = remember(resolved.backgrounds) {
         resolved.backgrounds.toCjkInlineBackgrounds()
     }
-    val textModifier = modifier.markdownInlineInteractionSemantics(resolved.interactions)
+    val textModifier = modifier
+        .markdownInlineInteractionSemantics(resolved.interactions)
     val effectiveParagraph = if (markdownStyle.insetProse) insetProseParagraphStyle(paragraphStyle ?: ParagraphStyle(firstLineIndent = org.tiqian.core.Ic.Zero)) else paragraphStyle
     if (effectiveParagraph == null) {
         CjkText(
@@ -108,7 +119,7 @@ internal fun MarkdownTextBlock(
             inlineBackgrounds = inlineBackgrounds,
             inlineDecorations = inlineDecorations,
             measurer = paragraphMeasurer,
-            precomputedLayout = precomputed?.layout,
+            precomputedLayout = precomputed?.layout?.takeIf { resolved.endMarkers.isEmpty() },
         )
     } else {
         CjkText(
@@ -120,14 +131,14 @@ internal fun MarkdownTextBlock(
             inlineBackgrounds = inlineBackgrounds,
             inlineDecorations = inlineDecorations,
             measurer = paragraphMeasurer,
-            precomputedLayout = precomputed?.layout,
+            precomputedLayout = precomputed?.layout?.takeIf { resolved.endMarkers.isEmpty() },
         )
     }
 }
 
 internal fun ResolvedMarkdownText.toCjkInlineObjects(
     density: androidx.compose.ui.unit.Density,
-): List<CjkInlineObject> = tiqianInlineObjects.map { resolvedObject ->
+): List<CjkInlineObject> = (tiqianInlineObjects.map { resolvedObject ->
     val metrics = requireNotNull(resolvedObject.content.metrics)
     CjkInlineObject(
                 range = TextRange(resolvedObject.start, resolvedObject.endExclusive),
@@ -188,4 +199,21 @@ internal fun ResolvedMarkdownText.toCjkInlineObjects(
                     resolvedObject.content.content(resolvedObject.content.alternateText)
                 },
     )
-}
+} + endMarkers.map { marker ->
+            CjkInlineObject(
+                range = TextRange(marker.endExclusive - 1, marker.endExclusive),
+                advance = marker.marker.gap + marker.marker.size,
+                ascent = marker.marker.size + marker.marker.offset,
+                descent = 0.dp,
+            ) {
+                val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+                Canvas(Modifier.fillMaxSize().clipToBounds()) {
+                    val side = marker.marker.size.toPx()
+                    translate(left = if (rtl) 0f else marker.marker.gap.toPx()) {
+                        clipRect(right = side, bottom = side) {
+                            with(marker.marker.painter) { draw(Size(side, side), colorFilter = ColorFilter.tint(marker.marker.color)) }
+                        }
+                    }
+                }
+            }
+        }).sortedBy { it.range.start }
