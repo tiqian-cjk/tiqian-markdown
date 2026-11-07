@@ -2,24 +2,27 @@ package org.tiqian.markdown.compose
 
 import org.tiqian.markdown.DefaultMarkdownCodeHighlighter
 import org.tiqian.markdown.MarkdownBlock
-import org.tiqian.markdown.MarkdownBlockQuote
+import org.tiqian.markdown.MarkdownContainerBlock
+import org.tiqian.markdown.MarkdownBibliographyBlock
+import org.tiqian.markdown.MarkdownTocBlock
+import org.tiqian.markdown.MarkdownDiagramBlock
+import org.tiqian.markdown.MarkdownPageBreakBlock
 import org.tiqian.markdown.MarkdownCodeBlock
 import org.tiqian.markdown.MarkdownCodeHighlighter
 import org.tiqian.markdown.MarkdownCustomBlock
 import org.tiqian.markdown.MarkdownFootnoteDefinition
 import org.tiqian.markdown.MarkdownFootnotePlacement
-import org.tiqian.markdown.MarkdownHeading
 import org.tiqian.markdown.MarkdownHtmlBlock
 import org.tiqian.markdown.MarkdownImageBlock
-import org.tiqian.markdown.MarkdownList
 import org.tiqian.markdown.MarkdownMathBlock
-import org.tiqian.markdown.MarkdownParagraph
 import org.tiqian.markdown.MarkdownRenderDocument
 import org.tiqian.markdown.MarkdownTable
 import org.tiqian.markdown.MarkdownText
 import org.tiqian.markdown.MarkdownTextMark
 import org.tiqian.markdown.MarkdownThematicBreak
 import org.tiqian.markdown.MarkdownUnsupportedBlock
+import org.tiqian.markdown.childBlocks
+import org.tiqian.markdown.directTexts
 import org.tiqian.markdown.markdownImageGallery
 import org.tiqian.markdown.placeFootnotes
 
@@ -28,6 +31,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -48,6 +52,12 @@ class MarkdownBlockSlots(
     val customBlock: (@Composable (MarkdownCustomBlock, MarkdownStyle) -> Unit)? = null,
     val thematicBreak: (@Composable (MarkdownThematicBreak, MarkdownStyle) -> Unit)? = null,
     val unsupportedBlock: (@Composable (MarkdownUnsupportedBlock, MarkdownStyle) -> Unit)? = null,
+    /** Children/default content retain the current selection, navigation and node-event context. */
+    val container: (@Composable (MarkdownContainerBlock, MarkdownStyle, defaultContent: @Composable () -> Unit) -> Unit)? = null,
+    val bibliography: (@Composable (MarkdownBibliographyBlock, MarkdownStyle, defaultContent: @Composable () -> Unit) -> Unit)? = null,
+    val tableOfContents: (@Composable (MarkdownTocBlock, MarkdownStyle, defaultContent: @Composable () -> Unit) -> Unit)? = null,
+    val diagram: (@Composable (MarkdownDiagramBlock, MarkdownStyle) -> Unit)? = null,
+    val pageBreak: (@Composable (MarkdownPageBreakBlock, MarkdownStyle) -> Unit)? = null,
 )
 
 val DefaultMarkdownBlockSlots: MarkdownBlockSlots = MarkdownBlockSlots()
@@ -70,6 +80,8 @@ fun TiqianMarkdown(
     onFootnoteClick: ((String) -> Unit)? = null,
     footnotePlacement: MarkdownFootnotePlacement = MarkdownFootnotePlacement.AfterBlock,
     codeHighlighter: MarkdownCodeHighlighter = DefaultMarkdownCodeHighlighter,
+    /** Return true to handle a node; false continues to ancestors and existing default actions. */
+    onNodeClick: ((MarkdownNodeClickEvent) -> Boolean)? = null,
 ) {
     val density = LocalDensity.current
     val deferredLayout = LocalMarkdownDeferredLayout.current
@@ -78,13 +90,24 @@ fun TiqianMarkdown(
             document.placeFootnotes(footnotePlacement)
         }
     }
-    val footnoteOwnerKeys = remember(placedBlocks) {
-        placedBlocks.filterIsInstance<MarkdownFootnoteDefinition>()
-            .associate { it.label to it.metadata.key }
+    val headingNavigation = rememberMarkdownHeadingNavigation(placedBlocks, deferredLayout)
+    val footnoteTargetKeys = remember(placedBlocks) {
+        buildMap {
+            fun collect(block: MarkdownBlock) {
+                if (block is MarkdownFootnoteDefinition) put(block.label, block.metadata.key)
+                if (block is MarkdownBibliographyBlock) block.entries.forEach { put("bibliography:" + it.key, block.metadata.key) }
+                block.childBlocks().forEach(::collect)
+            }
+            placedBlocks.forEach(::collect)
+        }
     }
     val footnoteNavigationState = rememberMarkdownFootnoteNavigationState(
+        document = document,
         materializeDefinition = { label ->
-            footnoteOwnerKeys[label]?.let { key -> deferredLayout?.onMaterializeOwner?.invoke(key) } == true
+            footnoteTargetKeys[label]?.let(headingNavigation::activateAncestors)?.let { ownerKey ->
+                deferredLayout?.onMaterializeOwner?.invoke(ownerKey)
+                true
+            } == true
         },
     )
     val imageGallery = remember(placedBlocks) {
@@ -107,101 +130,101 @@ fun TiqianMarkdown(
         }
     }
     val mathRuntime = if (containsMath) rememberMarkdownMathRuntime(style) else null
+    val documentText = remember(document) { lazy(LazyThreadSafetyMode.NONE) { document.blocks.joinToString("\n") { it.readableText() } } }
     CompositionLocalProvider(
         LocalMarkdownFootnoteNavigationState provides footnoteNavigationState,
         LocalMarkdownImageGallery provides imageGallery,
         LocalMarkdownCodeHighlighter provides codeHighlighter,
         LocalMarkdownParagraphMeasurer provides paragraphMeasurer,
         LocalMarkdownMathRuntime provides mathRuntime,
+        LocalMarkdownNodeClick provides rememberUpdatedState(onNodeClick),
+        LocalMarkdownDocumentRevision provides document.revision,
+        LocalMarkdownDocumentBlocks provides placedBlocks,
+        LocalMarkdownHeadingNavigation provides headingNavigation,
     ) {
-        BoxWithConstraints(modifier) {
-            val bodyCoreTextStyle = remember(style.body, density) {
-                style.body.toCjkTextStyle().toCoreTextStyle(density)
-            }
-            val availableWidthPx = with(density) { maxWidth.toPx() }
-            val proseWidth = if (style.proseMeasure.enabled) {
-                availableWidthPx.takeIf(Float::isFinite)?.let { width ->
-                    val availableCells = width / bodyCoreTextStyle.fontSize
-                    val resolvedCells = resolveMarkdownProseMeasureCells(availableCells, style.proseMeasure)
-                    val frameWidth = remember(width, resolvedCells, bodyCoreTextStyle.fontSize, paragraphMeasurer) {
-                        measureProseFrameWidth(paragraphMeasurer, resolvedCells * bodyCoreTextStyle.fontSize, bodyCoreTextStyle.fontSize)
-                    }
-                    with(density) { proseFrameContainerWidth(frameWidth, width).toDp() }
+        val nodeClickEnabled = LocalMarkdownNodeClick.current?.value != null
+        MarkdownNodeClickScope(modifier = modifier, event = {
+            MarkdownNodeClickEvent(
+                nodeType = document.metadata?.nodeType ?: "Document",
+                text = documentText.value,
+                metadata = document.metadata ?: generatedMarkdownNodeMetadata(null, -1),
+                documentRevision = document.revision,
+            )
+        }) {
+            BoxWithConstraints(if (nodeClickEnabled) Modifier else modifier) {
+                val bodyCoreTextStyle = remember(style.body, density) {
+                    style.body.toCjkTextStyle().toCoreTextStyle(density)
                 }
-            } else {
-                null
-            }
-            val estimatedBlockHeights = remember(
-                placedBlocks,
-                style,
-                maxWidth,
-                density.density,
-                density.fontScale,
-                deferredLayout != null,
-            ) {
-                if (deferredLayout == null) {
-                    emptyList()
+                val availableWidthPx = with(density) { maxWidth.toPx() }
+                val proseWidth = if (style.proseMeasure.enabled) {
+                    availableWidthPx.takeIf(Float::isFinite)?.let { width ->
+                        val availableCells = width / bodyCoreTextStyle.fontSize
+                        val resolvedCells = resolveMarkdownProseMeasureCells(availableCells, style.proseMeasure)
+                        val frameWidth = remember(width, resolvedCells, bodyCoreTextStyle.fontSize, paragraphMeasurer) {
+                            measureProseFrameWidth(paragraphMeasurer, resolvedCells * bodyCoreTextStyle.fontSize, bodyCoreTextStyle.fontSize)
+                        }
+                        with(density) { proseFrameContainerWidth(frameWidth, width).toDp() }
+                    }
                 } else {
-                    val widthDp = maxWidth.value.coerceAtLeast(1f)
-                    markdownTraceSection("TiqianMarkdown.estimateHeights") {
-                        placedBlocks.map { block ->
-                            estimateMarkdownBlockHeightDp(block, widthDp, style)
+                    null
+                }
+                val estimatedBlockHeights = remember(
+                    placedBlocks,
+                    style,
+                    maxWidth,
+                    density.density,
+                    density.fontScale,
+                    deferredLayout != null,
+                ) {
+                    if (deferredLayout == null) {
+                        emptyList()
+                    } else {
+                        val widthDp = maxWidth.value.coerceAtLeast(1f)
+                        markdownTraceSection("TiqianMarkdown.estimateHeights") {
+                            placedBlocks.map { block ->
+                                estimateMarkdownBlockHeightDp(block, widthDp, style)
+                            }
                         }
                     }
                 }
-            }
-            if (deferredLayout == null) {
-                MarkdownBlocks(
-                    blocks = placedBlocks,
-                    modifier = Modifier.fillMaxWidth(),
-                    style = style,
-                    slots = slots,
-                    inlineSlots = inlineSlots,
-                    onLinkClick = onLinkClick,
-                    onFootnoteClick = onFootnoteClick,
-                    compact = false,
-                    topLevelProseWidth = proseWidth,
-                )
-            } else {
-                DeferredMarkdownBlocks(
-                    blocks = placedBlocks,
-                    estimatedHeightsDp = estimatedBlockHeights,
-                    deferredLayout = deferredLayout,
-                    modifier = Modifier.fillMaxWidth(),
-                    style = style,
-                    slots = slots,
-                    inlineSlots = inlineSlots,
-                    onLinkClick = onLinkClick,
-                    onFootnoteClick = onFootnoteClick,
-                    topLevelProseWidth = proseWidth,
-                    mathRuntime = mathRuntime,
-                    prelayoutWidth = proseWidth ?: maxWidth,
-                    measurementSession = measurementSession,
-                )
+                if (deferredLayout == null) {
+                    MarkdownBlocks(
+                        blocks = placedBlocks,
+                        modifier = Modifier.fillMaxWidth(),
+                        style = style,
+                        slots = slots,
+                        inlineSlots = inlineSlots,
+                        onLinkClick = onLinkClick,
+                        onFootnoteClick = onFootnoteClick,
+                        compact = false,
+                        topLevelProseWidth = proseWidth,
+                    )
+                } else {
+                    DeferredMarkdownBlocks(
+                        blocks = placedBlocks,
+                        estimatedHeightsDp = estimatedBlockHeights,
+                        deferredLayout = deferredLayout,
+                        modifier = Modifier.fillMaxWidth(),
+                        style = style,
+                        slots = slots,
+                        inlineSlots = inlineSlots,
+                        onLinkClick = onLinkClick,
+                        onFootnoteClick = onFootnoteClick,
+                        topLevelProseWidth = proseWidth,
+                        mathRuntime = mathRuntime,
+                        prelayoutWidth = proseWidth ?: maxWidth,
+                        measurementSession = measurementSession,
+                    )
+                }
             }
         }
     }
 }
 
 internal fun List<MarkdownBlock>.containsMarkdownMath(): Boolean = any { block ->
-    when (block) {
-        is MarkdownMathBlock -> true
-        is MarkdownParagraph -> block.text.containsMarkdownMath()
-        is MarkdownHeading -> block.text.containsMarkdownMath()
-        is MarkdownBlockQuote -> block.blocks.containsMarkdownMath()
-        is MarkdownList -> block.items.any { it.blocks.containsMarkdownMath() }
-        is MarkdownImageBlock -> block.caption?.containsMarkdownMath() == true
-        is MarkdownTable ->
-            block.caption?.containsMarkdownMath() == true ||
-                block.rows.any { row -> row.cells.any { it.text.containsMarkdownMath() } }
-        is MarkdownFootnoteDefinition -> block.blocks.containsMarkdownMath()
-        is MarkdownCodeBlock,
-        is MarkdownCustomBlock,
-        is MarkdownHtmlBlock,
-        is MarkdownThematicBreak,
-        is MarkdownUnsupportedBlock,
-        -> false
-    }
+    block is MarkdownMathBlock ||
+        block.directTexts().any { it.containsMarkdownMath() } ||
+        block.childBlocks().containsMarkdownMath()
 }
 
 private fun MarkdownText.containsMarkdownMath(): Boolean =

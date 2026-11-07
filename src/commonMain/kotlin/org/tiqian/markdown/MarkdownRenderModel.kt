@@ -4,6 +4,8 @@ package org.tiqian.markdown
 data class MarkdownRenderDocument(
     val blocks: List<MarkdownBlock>,
     val issues: List<MarkdownCapabilityIssue> = emptyList(),
+    val metadata: MarkdownNodeMetadata? = null,
+    val revision: Long? = null,
 )
 
 data class MarkdownNodeKey(
@@ -25,7 +27,30 @@ data class MarkdownNodeMetadata(
     val sourceSpan: MarkdownSourceSpan,
     /** Exact Markdown covered by this node when the compiler was given the source text. */
     val sourceMarkdown: String? = null,
+    /** Original parser type, attributes and semantic data; visual marks remain independent. */
+    val nodeType: String? = null,
+    val attributes: Map<String, String> = emptyMap(),
+    val payload: Map<String, String> = emptyMap(),
+    val persistentId: Long? = null,
+    /** False when the adapter has no exact source position, including generated display nodes. */
+    val hasSourceSpan: Boolean = true,
+    /** Lossless public semantic fields, kept separate from interpreted visual attributes. */
+    val properties: Map<String, MarkdownNodeValue> = emptyMap(),
+    /** Original reading-order children, including definitions which have no hit region. */
+    val children: List<MarkdownNodeMetadata> = emptyList(),
+    val contentHash: Long? = null,
 )
+
+/** Parser-independent snapshot values; adapters defensively copy lists and maps. */
+sealed interface MarkdownNodeValue {
+    data object Null : MarkdownNodeValue
+    data class Text(val value: String) : MarkdownNodeValue
+    data class Boolean(val value: kotlin.Boolean) : MarkdownNodeValue
+    data class Integer(val value: Long) : MarkdownNodeValue
+    data class Decimal(val value: Double) : MarkdownNodeValue
+    data class ListValue(val values: List<MarkdownNodeValue>) : MarkdownNodeValue
+    data class ObjectValue(val values: Map<String, MarkdownNodeValue>) : MarkdownNodeValue
+}
 
 sealed interface MarkdownBlock {
     val metadata: MarkdownNodeMetadata
@@ -77,11 +102,14 @@ data class MarkdownCodeBlock(
     val showLineNumbers: Boolean = true,
     /** Source ranges classified by a parser or highlighter without leaking its node types. */
     val highlights: List<MarkdownCodeHighlight> = emptyList(),
+    val startLineNumber: Int = 1,
+    val highlightedLines: List<IntRange> = emptyList(),
 ) : MarkdownBlock
 
 data class MarkdownCodeHighlight(
     val range: MarkdownTextRange,
     val kind: MarkdownCodeHighlightKind,
+    val metadata: MarkdownNodeMetadata? = null,
 )
 
 enum class MarkdownCodeHighlightKind {
@@ -147,6 +175,8 @@ data class MarkdownTableRow(
     val cells: List<MarkdownTableCell>,
     val header: Boolean,
     val metadata: MarkdownNodeMetadata,
+    /** Optional table head/body identity, retained while rows stay in display order. */
+    val sectionMetadata: MarkdownNodeMetadata? = null,
 )
 
 data class MarkdownTableCell(
@@ -168,6 +198,7 @@ data class MarkdownCustomBlock(
     val kind: String,
     val attributes: Map<String, String> = emptyMap(),
     override val metadata: MarkdownNodeMetadata,
+    val blocks: List<MarkdownBlock> = emptyList(),
 ) : MarkdownBlock
 
 /**
@@ -198,7 +229,9 @@ data class MarkdownTextRange(
 
 data class MarkdownTextSpan(
     val range: MarkdownTextRange,
-    val mark: MarkdownTextMark,
+    /** Null retains an ordinary or unsupported node without inventing a visual mark. */
+    val mark: MarkdownTextMark? = null,
+    val metadata: MarkdownNodeMetadata? = null,
 )
 
 sealed interface MarkdownTextMark {
@@ -211,6 +244,9 @@ sealed interface MarkdownTextMark {
     data object Subscript : MarkdownTextMark
     data object Inserted : MarkdownTextMark
     data object KeyboardInput : MarkdownTextMark
+    data object Spoiler : MarkdownTextMark
+
+    data class Citation(val key: String) : MarkdownTextMark
 
     data class Link(
         val destination: String,
