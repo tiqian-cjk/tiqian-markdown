@@ -32,6 +32,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -56,6 +58,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -99,7 +102,7 @@ import org.tiqian.core.LastLineAlignment
 import org.tiqian.core.LineLengthGrid
 import org.tiqian.core.ParagraphStyle
 import org.tiqian.core.TextStyle as CoreTextStyle
-import org.tiqian.core.ic
+import org.tiqian.core.Ic
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 import org.tiqian.markdown.compose.generated.resources.Res
@@ -120,7 +123,7 @@ import kotlin.math.roundToInt
 // recorded rationale. Width negotiation keeps columns on the em grid so the quantized
 // measure never leaves per-line slack.
 internal val markdownTableParagraphStyle = ParagraphStyle(
-    firstLineIndent = 0.ic,
+    firstLineIndent = Ic.Zero,
     lastLineAlignment = LastLineAlignment.Start,
 )
 
@@ -271,7 +274,7 @@ fun DefaultMarkdownTable(
             with(density) { width.toDp() }
         }
         val centeringWidth = maxOf(maxWidth, tableWidth)
-        Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+        HorizontallyScrollableTable {
             Box(Modifier.width(centeringWidth)) {
                 Column(
                     Modifier
@@ -301,62 +304,96 @@ fun DefaultMarkdownTable(
                             ),
                     ) {
                         block.rows.forEachIndexed { rowIndex, row ->
-                            Row(Modifier.height(IntrinsicSize.Min)) {
-                                row.cells.forEachIndexed { columnIndex, cell ->
-                                    val cellModifier = Modifier
-                                        .width(cellWidths[columnIndex])
-                                        .fillMaxHeight()
-                                        .let { modifier ->
-                                            if (cell.header) {
-                                                modifier.background(style.tableHeaderBackground)
-                                            } else {
-                                                modifier
-                                            }
-                                        }
-                                        .drawWithContent {
-                                            drawContent()
-                                            if (rowIndex > 0) {
-                                                drawLine(
-                                                    color = style.tableBorderColor,
-                                                    start = Offset(0f, borderWidthPx / 2f),
-                                                    end = Offset(size.width, borderWidthPx / 2f),
-                                                    strokeWidth = borderWidthPx,
-                                                )
-                                            }
-                                            if (columnIndex > 0) {
-                                                drawLine(
-                                                    color = style.tableBorderColor,
-                                                    start = Offset(borderWidthPx / 2f, 0f),
-                                                    end = Offset(borderWidthPx / 2f, size.height),
-                                                    strokeWidth = borderWidthPx,
-                                                )
-                                            }
-                                        }
-                                        .padding(style.tableCellPadding)
-                                    val textStyle = style.tableText.copy(
-                                        fontWeight = if (cell.header) FontWeight.Medium else style.tableText.fontWeight,
-                                        textAlign = when (cell.alignment) {
-                                            MarkdownTableAlignment.Start,
-                                            MarkdownTableAlignment.Unspecified,
-                                            -> TextAlign.Start
-                                            MarkdownTableAlignment.Center -> TextAlign.Center
-                                            MarkdownTableAlignment.End -> TextAlign.End
-                                        },
+                            val revision = LocalMarkdownDocumentRevision.current
+                            val rowContent: @Composable () -> Unit = {
+                                MarkdownNodeClickScope(event = {
+                                    MarkdownNodeClickEvent(
+                                        nodeType = row.metadata.nodeType ?: "TableRow",
+                                        text = row.cells.joinToString("\t") { it.text.value },
+                                        metadata = row.metadata,
+                                        payload = mapOf("header" to row.header.toString()) + row.metadata.payload,
+                                        documentRevision = revision,
                                     )
-                                    MarkdownSelectionScope(markdownSelectionKey(cell.metadata.key, "cell")) {
-                                        MarkdownTextBlock(
-                                            text = cell.text,
-                                            textStyle = textStyle,
-                                            markdownStyle = style,
-                                            inlineSlots = inlineSlots,
-                                            onLinkClick = onLinkClick,
-                                            onFootnoteClick = onFootnoteClick,
-                                            modifier = cellModifier,
-                                            paragraphStyle = markdownTableParagraphStyle,
-                                        )
+                                }) {
+                                    Row(Modifier.height(IntrinsicSize.Min)) {
+                                        row.cells.forEachIndexed { columnIndex, cell ->
+                                            val cellModifier = Modifier
+                                                .width(cellWidths[columnIndex])
+                                                .fillMaxHeight()
+                                                .let { modifier ->
+                                                    if (cell.header) {
+                                                        modifier.background(style.tableHeaderBackground)
+                                                    } else {
+                                                        modifier
+                                                    }
+                                                }
+                                                .drawWithContent {
+                                                    drawContent()
+                                                    if (rowIndex > 0) {
+                                                        drawLine(
+                                                            color = style.tableBorderColor,
+                                                            start = Offset(0f, borderWidthPx / 2f),
+                                                            end = Offset(size.width, borderWidthPx / 2f),
+                                                            strokeWidth = borderWidthPx,
+                                                        )
+                                                    }
+                                                    if (columnIndex > 0) {
+                                                        drawLine(
+                                                            color = style.tableBorderColor,
+                                                            start = Offset(borderWidthPx / 2f, 0f),
+                                                            end = Offset(borderWidthPx / 2f, size.height),
+                                                            strokeWidth = borderWidthPx,
+                                                        )
+                                                    }
+                                                }
+                                                .padding(style.tableCellPadding)
+                                            val textStyle = style.tableText.copy(
+                                                fontWeight = if (cell.header) FontWeight.Medium else style.tableText.fontWeight,
+                                                textAlign = when (cell.alignment) {
+                                                    MarkdownTableAlignment.Start,
+                                                    MarkdownTableAlignment.Unspecified,
+                                                    -> TextAlign.Start
+                                                    MarkdownTableAlignment.Center -> TextAlign.Center
+                                                    MarkdownTableAlignment.End -> TextAlign.End
+                                                },
+                                            )
+                                            MarkdownNodeClickScope(event = {
+                                                MarkdownNodeClickEvent(
+                                                    nodeType = cell.metadata.nodeType ?: "TableCell",
+                                                    text = cell.text.value,
+                                                    metadata = cell.metadata,
+                                                    payload = mapOf("header" to cell.header.toString(), "alignment" to cell.alignment.name) + cell.metadata.payload,
+                                                    documentRevision = revision,
+                                                )
+                                            }, modifier = cellModifier) {
+                                                MarkdownSelectionScope(markdownSelectionKey(cell.metadata.key, "cell")) {
+                                                    MarkdownTextBlock(
+                                                        text = cell.text,
+                                                        textStyle = textStyle,
+                                                        markdownStyle = style,
+                                                        inlineSlots = inlineSlots,
+                                                        onLinkClick = onLinkClick,
+                                                        onFootnoteClick = onFootnoteClick,
+                                                        modifier = if (LocalMarkdownNodeClick.current?.value == null) cellModifier else Modifier,
+                                                        paragraphStyle = markdownTableParagraphStyle,
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
+                            val section = row.sectionMetadata
+                            if (section == null) rowContent() else MarkdownNodeClickScope(event = {
+                                MarkdownNodeClickEvent(
+                                    nodeType = section.nodeType ?: if (row.header) "TableHead" else "TableBody",
+                                    text = block.rows.filter { it.sectionMetadata?.key == section.key }.joinToString("\n") {
+                                        it.cells.joinToString("\t") { cell -> cell.text.value }
+                                    },
+                                    metadata = section,
+                                    documentRevision = revision,
+                                )
+                            }, content = rowContent)
                         }
                     }
                 }
@@ -365,3 +402,23 @@ fun DefaultMarkdownTable(
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun HorizontallyScrollableTable(content: @Composable () -> Unit) {
+    val parent = LocalBringIntoViewSpec.current
+    val state = LocalMarkdownTextSearchDocument.current?.state
+    val horizontal = remember(parent, state) {
+        if (state == null) parent else object : BringIntoViewSpec {
+            override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
+                if (state.activeRelocation() != null) {
+                    // Search insets and the persistent centering decision belong to the vertical ancestor.
+                    super.calculateScrollDistance(offset, size, containerSize)
+                } else {
+                    parent.calculateScrollDistance(offset, size, containerSize)
+                }
+        }
+    }
+    CompositionLocalProvider(LocalBringIntoViewSpec provides horizontal) {
+        Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) { content() }
+    }
+}

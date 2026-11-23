@@ -4,16 +4,25 @@ import org.tiqian.markdown.MarkdownText
 import org.tiqian.markdown.MarkdownTextMark
 import org.tiqian.markdown.MarkdownTextRange
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.withCompositionLocal
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.LinkInteractionListener
@@ -35,6 +44,7 @@ import org.tiqian.compose.CjkInlineBackgroundMetricPolicy
 import org.tiqian.compose.CjkInlineDecoration
 import org.tiqian.compose.CjkInlineDecorationStyle
 import org.tiqian.compose.addCjkInteractionOnlyAnnotation
+import org.tiqian.compose.addCjkRenderOnlyInlineObject
 import org.tiqian.compose.addCjkInlineAttachment
 import org.tiqian.compose.addTechnicalInlineAnnotation
 import org.tiqian.core.InlineAttachment
@@ -109,6 +119,8 @@ data class MarkdownInlineContent(
     val layoutFragments: List<MarkdownInlineFragment> = emptyList(),
     val leadingBoundary: MarkdownInlineBoundaryAdjustment = MarkdownInlineBoundaryAdjustment.Fixed,
     val trailingBoundary: MarkdownInlineBoundaryAdjustment = MarkdownInlineBoundaryAdjustment.Fixed,
+    /** Default click on an inline object; an accepted node event suppresses it. */
+    val onClick: (() -> Unit)? = null,
     val content: @Composable (alternateText: String) -> Unit,
 ) {
     init {
@@ -128,7 +140,25 @@ data class MarkdownCustomInlinePresentation(
     val decoration: MarkdownInlineDecoration? = null,
     val onClick: ((text: String) -> Unit)? = null,
     val accessibilityLabel: ((text: String) -> String)? = null,
+    /** 在范围末端之后真实占据行内空间；内部排版占位不进入逻辑文本、复制或选择索引。 */
+    val endMarker: MarkdownInlineEndMarker? = null,
 )
+
+/** 宿主提供的行内末端标记；由 CjkInlineObject 度量并参与断行。 */
+data class MarkdownInlineEndMarker(
+    val painter: Painter,
+    val color: Color,
+    val size: Dp = 8.dp,
+    val gap: Dp = 3.dp,
+    /** 标记相对行基线的上移距离。 */
+    val offset: Dp = 2.dp,
+) {
+    init {
+        require(size.value.isFinite() && size.value > 0f)
+        require(gap.value.isFinite() && gap.value >= 0f)
+        require(offset.value.isFinite() && (size + offset).value >= 0f)
+    }
+}
 
 sealed interface MarkdownInlineDecoration {
     data class DashedUnderline(
@@ -152,18 +182,39 @@ internal data class ResolvedMarkdownText(
     val backgrounds: List<ResolvedInlineBackground>,
     val decorations: List<ResolvedInlineDecoration>,
     val interactions: List<ResolvedInlineInteraction>,
+    /** Source edges in raw LayoutResult coordinates: starts skip inserted slots, ends stop before them. */
+    val sourceToRenderedOffset: (Int, Boolean) -> Int = { offset, _ -> offset },
+    val endMarkers: List<ResolvedInlineEndMarker> = emptyList(),
+    val hiddenSpoilers: List<ResolvedMarkdownSpoiler> = emptyList(),
+    /** Accessibility projection only; drawing, selection and events retain the source text. */
+    val semanticsText: AnnotatedString? = null,
+)
+
+internal data class ResolvedMarkdownSpoiler(
+    val spanIndex: Int,
+    val sourceRange: MarkdownTextRange,
+    val start: Int,
+    val endExclusive: Int,
+    val color: Color,
+    val onReveal: () -> Unit,
 )
 
 internal data class ResolvedTiqianInlineObject(
     val start: Int,
     val endExclusive: Int,
     val content: MarkdownInlineContent,
+    val onNodeClick: ((runDefaultAction: Boolean) -> Boolean)? = null,
 )
 
 internal data class ResolvedInlineDecoration(
     val start: Int,
     val endExclusive: Int,
     val decoration: MarkdownInlineDecoration,
+)
+
+internal data class ResolvedInlineEndMarker(
+    val endExclusive: Int,
+    val marker: MarkdownInlineEndMarker,
 )
 
 internal data class ResolvedInlineBackground(
@@ -245,7 +296,30 @@ internal fun resolveMarkdownText(
     onLinkClick: ((String) -> Unit)?,
     onFootnoteClick: ((String) -> Unit)?,
     preparedInlineMath: Map<Int, MarkdownInlineContent> = emptyMap(),
+    nodeClicks: MarkdownTextNodeClicks? = null,
+    onCitationClick: ((String) -> Unit)? = null,
 ): ResolvedMarkdownText {
+    val navigation = LocalMarkdownFootnoteNavigationState.current
+    val currentNavigation = rememberUpdatedState(navigation)
+    val currentCitationClick = rememberUpdatedState(onCitationClick)
+    val citationClick = remember(navigation != null || onCitationClick != null) {
+        if (navigation == null && onCitationClick == null) null else { citationKey: String ->
+            val callback = currentCitationClick.value
+            if (callback != null) callback(citationKey)
+            else currentNavigation.value?.bringDefinitionIntoView("bibliography:" + citationKey)
+            Unit
+        }
+    }
+    val spoilerReveals = text.spans.mapIndexedNotNull { index, span ->
+        if (span.mark != MarkdownTextMark.Spoiler) return@mapIndexedNotNull null
+        key("spoiler", span.metadata?.key ?: index) {
+            val revealed = remember(text, span.range) { mutableStateOf(false) }
+            val reveal = remember(revealed) { { revealed.value = true } }
+            if (revealed.value) null else index to reveal
+        }
+    }.toMap()
+    val spoilerColor = textStyle.color.takeIf { it != Color.Unspecified }
+        ?: style.body.color.takeIf { it != Color.Unspecified } ?: Color(0xFF202124)
     val needsInlineSlotResolution = remember(text.spans, inlineSlots) {
         text.spans.any { span ->
             when (span.mark) {
@@ -257,7 +331,7 @@ internal fun resolveMarkdownText(
         }
     }
     if (!needsInlineSlotResolution) {
-        return remember(text, style, onLinkClick, onFootnoteClick) {
+        return remember(text, style, onLinkClick, onFootnoteClick, citationClick, spoilerReveals, spoilerColor, nodeClicks) {
             buildResolvedMarkdownText(
                 text = text,
                 style = style,
@@ -265,16 +339,23 @@ internal fun resolveMarkdownText(
                 customPresentations = emptyMap(),
                 onLinkClick = onLinkClick,
                 onFootnoteClick = onFootnoteClick,
-            )
+                onCitationClick = citationClick,
+                spoilerReveals = spoilerReveals,
+                spoilerColor = spoilerColor,
+            ).withNodeClicks(text, nodeClicks)
         }
     }
 
     val replacements = mutableListOf<InlineReplacement>()
     val customPresentations = mutableListOf<CustomPresentation>()
     text.spans.forEachIndexed { index, span ->
+        val slotNodeClick = remember(nodeClicks, index) {
+            nodeClicks?.let { clicks -> { clicks.inlineHandlers[index]?.invoke() == true } }
+        }
+        val inlineNodeScope = if (nodeClicks == null) LocalMarkdownInlineNodeClick.current else slotNodeClick ?: { false }
         when (val mark = span.mark) {
             is MarkdownTextMark.InlineImage -> inlineSlots.image?.let { slot ->
-                key("image", index) { slot(mark, style, textStyle) }?.let { content ->
+                key("image", index) { withCompositionLocal(LocalMarkdownInlineNodeClick provides inlineNodeScope) { slot(mark, style, textStyle) } }?.let { content ->
                     if (content.metrics == null) return@let
                     replacements += content.toInlineReplacements(
                         spanIndex = index,
@@ -288,7 +369,7 @@ internal fun resolveMarkdownText(
             is MarkdownTextMark.InlineMath -> {
                 val prepared = preparedInlineMath[index]
                 val content = prepared ?: (inlineSlots.math ?: DefaultMarkdownMathInlineSlot).let { slot ->
-                    key("math", index) { slot(mark, style, textStyle) }
+                    key("math", index) { withCompositionLocal(LocalMarkdownInlineNodeClick provides inlineNodeScope) { slot(mark, style, textStyle) } }
                 }
                 content?.let {
                     if (it.metrics == null) return@let
@@ -302,8 +383,16 @@ internal fun resolveMarkdownText(
             }
 
             is MarkdownTextMark.Custom -> inlineSlots.custom?.let { slot ->
-                key("custom", index) { slot(mark, style, textStyle) }?.let { presentation ->
-                    customPresentations += CustomPresentation(index, presentation)
+                key("custom", index) { withCompositionLocal(LocalMarkdownInlineNodeClick provides inlineNodeScope) { slot(mark, style, textStyle) } }?.let { presentation ->
+                    val currentClick = rememberUpdatedState(presentation.onClick)
+                    val stableClick = remember(presentation.onClick != null) {
+                        if (presentation.onClick == null) null else { value: String -> currentClick.value?.invoke(value); Unit }
+                    }
+                    val currentLabel = rememberUpdatedState(presentation.accessibilityLabel)
+                    val stableLabel = remember(presentation.accessibilityLabel != null) {
+                        if (presentation.accessibilityLabel == null) null else { value: String -> currentLabel.value?.invoke(value) ?: value }
+                    }
+                    customPresentations += CustomPresentation(index, presentation.copy(onClick = stableClick, accessibilityLabel = stableLabel))
                 }
             }
 
@@ -320,6 +409,10 @@ internal fun resolveMarkdownText(
         presentationsByIndex,
         onLinkClick,
         onFootnoteClick,
+        citationClick,
+        spoilerReveals,
+        spoilerColor,
+        nodeClicks,
     ) {
         buildResolvedMarkdownText(
             text = text,
@@ -328,7 +421,15 @@ internal fun resolveMarkdownText(
             customPresentations = presentationsByIndex,
             onLinkClick = onLinkClick,
             onFootnoteClick = onFootnoteClick,
-        )
+            onCitationClick = citationClick,
+            spoilerReveals = spoilerReveals,
+            spoilerColor = spoilerColor,
+        ).withNodeClicks(text, nodeClicks, if (nodeClicks == null) emptyMap() else customPresentations.mapNotNull { custom ->
+            custom.presentation.accessibilityLabel?.let { label ->
+                val range = text.spans[custom.spanIndex].range
+                custom.spanIndex to label(text.value.substring(range.start, range.endExclusive))
+            }
+        }.toMap())
     }
 }
 
@@ -356,9 +457,6 @@ internal fun resolveMarkdownTextWithPreparedMath(
     )
 }
 
-private fun MarkdownInlineContent.withSourceAlternateText(sourceText: String): MarkdownInlineContent =
-    if (alternateText.isNotEmpty()) this else copy(alternateText = sourceText)
-
 private fun MarkdownInlineContent.toInlineReplacements(
     spanIndex: Int,
     sourceRange: MarkdownTextRange,
@@ -369,7 +467,7 @@ private fun MarkdownInlineContent.toInlineReplacements(
         spanIndex = spanIndex,
         range = sourceRange,
         id = idPrefix,
-        content = withSourceAlternateText(sourceText),
+        content = if (alternateText.isNotEmpty()) this else copy(alternateText = sourceText),
     )
     if (layoutFragments.size < 2) return listOf(whole)
 
@@ -402,6 +500,7 @@ internal fun MarkdownText.toAnnotatedString(
     style: MarkdownStyle,
     onLinkClick: ((String) -> Unit)? = null,
     onFootnoteClick: ((String) -> Unit)? = null,
+    onCitationClick: ((String) -> Unit)? = null,
 ): AnnotatedString = buildResolvedMarkdownText(
     text = this,
     style = style,
@@ -409,6 +508,7 @@ internal fun MarkdownText.toAnnotatedString(
     customPresentations = emptyMap(),
     onLinkClick = onLinkClick,
     onFootnoteClick = onFootnoteClick,
+    onCitationClick = onCitationClick,
 ).annotated
 
 private fun buildResolvedMarkdownText(
@@ -418,6 +518,9 @@ private fun buildResolvedMarkdownText(
     customPresentations: Map<Int, CustomPresentation>,
     onLinkClick: ((String) -> Unit)?,
     onFootnoteClick: ((String) -> Unit)?,
+    onCitationClick: ((String) -> Unit)? = null,
+    spoilerReveals: Map<Int, () -> Unit> = emptyMap(),
+    spoilerColor: Color = Color(0xFF202124),
 ): ResolvedMarkdownText {
     val nonOverlappingReplacements = replacements.fold(mutableListOf<InlineReplacement>()) { accepted, candidate ->
         if (accepted.lastOrNull()?.range?.endExclusive?.let { it > candidate.range.start } != true) {
@@ -429,7 +532,14 @@ private fun buildResolvedMarkdownText(
     val base = text.buildInlineBase(nonOverlappingReplacements)
     val backgrounds = mutableListOf<ResolvedInlineBackground>()
     val decorations = mutableListOf<ResolvedInlineDecoration>()
+    val endMarkers = mutableListOf<ResolvedInlineEndMarker>()
     val interactions = mutableListOf<ResolvedInlineInteraction>()
+    val hiddenSpoilers = spoilerReveals.mapNotNull { (index, reveal) ->
+        val range = text.spans[index].range
+        val start = mapOffset(range.start, nonOverlappingReplacements, end = false)
+        val end = mapOffset(range.endExclusive, nonOverlappingReplacements, end = true)
+        if (start == end) null else ResolvedMarkdownSpoiler(index, range, start, end, spoilerColor, reveal)
+    }
     val annotated = AnnotatedString.Builder(base).apply {
         fun addRendererOwnedInlineCode(start: Int, end: Int) {
             addStyle(style.inlineCode.copy(background = Color.Unspecified), start, end)
@@ -450,10 +560,12 @@ private fun buildResolvedMarkdownText(
         }
 
         text.spans.forEachIndexed { index, span ->
+            if (span.range.start == span.range.endExclusive) return@forEachIndexed
             val start = mapOffset(span.range.start, nonOverlappingReplacements, end = false).coerceIn(0, length)
             val end = mapOffset(span.range.endExclusive, nonOverlappingReplacements, end = true).coerceIn(start, length)
             if (start == end) return@forEachIndexed
             when (val mark = span.mark) {
+                null -> Unit
                 MarkdownTextMark.Strong -> addStyle(SpanStyle(fontWeight = FontWeight.Bold), start, end)
                 MarkdownTextMark.Emphasis -> addStyle(SpanStyle(fontStyle = FontStyle.Italic), start, end)
                 MarkdownTextMark.Strikethrough -> addStyle(
@@ -559,6 +671,20 @@ private fun buildResolvedMarkdownText(
                     )
                 }
 
+                MarkdownTextMark.Spoiler -> Unit
+                is MarkdownTextMark.Citation -> {
+                    addCjkInteractionOnlyAnnotation(start, end)
+                    addLink(
+                        LinkAnnotation.Clickable(
+                            tag = "markdown-citation-$index",
+                            styles = TextLinkStyles(style = style.link),
+                            linkInteractionListener = { onCitationClick?.invoke(mark.key) },
+                        ),
+                        start,
+                        end,
+                    )
+                }
+
                 is MarkdownTextMark.Ruby -> Unit
                 is MarkdownTextMark.InlineMath -> if (index !in replacementIndexes) {
                     addRendererOwnedInlineCode(start, end)
@@ -604,10 +730,24 @@ private fun buildResolvedMarkdownText(
                     presentation.decoration?.let { decoration ->
                         decorations += ResolvedInlineDecoration(start, end, decoration)
                     }
+                    presentation.endMarker?.let { marker ->
+                        endMarkers += ResolvedInlineEndMarker(end, marker)
+                    }
                 }
             }
         }
     }.toAnnotatedString()
+    hiddenSpoilers.forEach { spoiler ->
+        backgrounds += ResolvedInlineBackground(
+            start = spoiler.start,
+            endExclusive = spoiler.endExclusive,
+            color = spoiler.color,
+            horizontalPadding = 0.dp,
+            verticalPadding = style.highlightVerticalPadding,
+            cornerRadius = style.highlightCornerRadius,
+            adjacentSameStyleClearance = style.adjacentSameStyleClearance,
+        )
+    }
 
     return ResolvedMarkdownText(
         annotated = annotated,
@@ -628,14 +768,20 @@ private fun buildResolvedMarkdownText(
                 ResolvedTiqianInlineObject(
                     start = start,
                     endExclusive = endExclusive,
-                    content = replacement.content,
+                    content = if (hiddenSpoilers.any { it.start <= start && it.endExclusive >= endExclusive }) {
+                        val color = hiddenSpoilers.first { it.start <= start && it.endExclusive >= endExclusive }.color
+                        replacement.content.copy(content = { Box(Modifier.fillMaxSize().background(color)) })
+                    } else replacement.content,
                 )
             }
         },
         backgrounds = backgrounds,
         decorations = decorations,
         interactions = interactions,
-    )
+        sourceToRenderedOffset = { offset, end -> mapOffset(offset, nonOverlappingReplacements, end) },
+        endMarkers = endMarkers,
+        hiddenSpoilers = hiddenSpoilers,
+    ).withInlineEndMarkerProjection()
 }
 
 private fun MarkdownText.buildInlineBase(replacements: List<InlineReplacement>): AnnotatedString {
@@ -688,36 +834,64 @@ private fun mapOffset(
     return originalOffset + delta
 }
 
-/**
- * Compose does not expose its underline metric. On the capability fallback path, custom dashed
- * underlines therefore become native solid underlines instead of maintaining a second guessed
- * `lineBottom - offset` geometry. The normal Tiqian path retains the requested dashed stroke.
- */
-internal fun ResolvedMarkdownText.composeFallbackAnnotatedString(): AnnotatedString {
-    if (decorations.isEmpty()) return annotated
-    return AnnotatedString.Builder(annotated).apply {
-        decorations.forEach { resolved ->
-            if (resolved.decoration is MarkdownInlineDecoration.DashedUnderline) {
-                addStyle(
-                    SpanStyle(textDecoration = TextDecoration.Underline),
-                    resolved.start,
-                    resolved.endExclusive,
-                )
-            }
-        }
-    }.toAnnotatedString()
-}
-
 internal fun Modifier.markdownInlineInteractionSemantics(
     interactions: List<ResolvedInlineInteraction>,
+    semanticsText: AnnotatedString? = null,
 ): Modifier {
-    if (interactions.isEmpty()) return this
-    return semantics {
-        customActions = interactions.map { interaction ->
-            CustomAccessibilityAction(interaction.accessibilityLabel) {
-                interaction.onClick()
-                true
-            }
+    if (interactions.isEmpty() && semanticsText == null) return this
+    val actions = interactions.map { interaction ->
+        CustomAccessibilityAction(interaction.accessibilityLabel) {
+            interaction.onClick()
+            true
         }
     }
+    return if (semanticsText == null) semantics { customActions = actions }
+    else clearAndSetSemantics {
+        text = semanticsText
+        customActions = actions
+    }
+}
+
+/** Insert slots only into the renderer projection; MarkdownText.value and source spans stay intact. */
+private fun ResolvedMarkdownText.withInlineEndMarkerProjection(): ResolvedMarkdownText {
+    if (endMarkers.isEmpty()) return this
+    val ordered = endMarkers.sortedBy { it.endExclusive }
+    // 同一原文边界的所有插槽都在范围起点之前、终点之后。
+    fun map(offset: Int, after: Boolean): Int {
+        val split = ordered.binarySearch {
+            if (it.endExclusive < offset || after && it.endExclusive == offset) -1 else 1
+        }
+        return offset + (-split - 1)
+    }
+    val sourceToBaseOffset = sourceToRenderedOffset
+    val text = StringBuilder(annotated.length + ordered.size)
+    var cursor = 0
+    val markers = ordered.map { marker ->
+        text.append(annotated.text, cursor, marker.endExclusive)
+        text.append('\uFFFC')
+        cursor = marker.endExclusive
+        marker.copy(endExclusive = text.length)
+    }
+    text.append(annotated.text, cursor, annotated.length)
+
+    // 切分 AnnotatedString 会把同一个跨槽注解（如整段读音）复制到每个子串。
+    val ranges = mutableListOf<AnnotatedString.Range<AnnotatedString.Annotation>>()
+    annotated.flatMapAnnotations { range ->
+        val start = map(range.start, after = true)
+        val end = if (range.start == range.end) start else map(range.end, after = false)
+        ranges += AnnotatedString.Range(range.item, start, end, range.tag)
+        emptyList()
+    }
+    val output = AnnotatedString.Builder(AnnotatedString(text.toString(), ranges))
+    markers.forEach { output.addCjkRenderOnlyInlineObject(it.endExclusive - 1, it.endExclusive) }
+    return copy(
+        annotated = output.toAnnotatedString(),
+        tiqianInlineObjects = tiqianInlineObjects.map { it.copy(start = map(it.start, true), endExclusive = map(it.endExclusive, false)) },
+        backgrounds = backgrounds.map { it.copy(start = map(it.start, true), endExclusive = map(it.endExclusive, false)) },
+        decorations = decorations.map { it.copy(start = map(it.start, true), endExclusive = map(it.endExclusive, false)) },
+        interactions = interactions.map { it.copy(start = map(it.start, true), endExclusive = map(it.endExclusive, false)) },
+        hiddenSpoilers = hiddenSpoilers.map { it.copy(start = map(it.start, true), endExclusive = map(it.endExclusive, false)) },
+        sourceToRenderedOffset = { offset, end -> map(sourceToBaseOffset(offset, end), after = !end) },
+        endMarkers = markers,
+    )
 }

@@ -1,9 +1,13 @@
 package org.tiqian.markdown.compose
 
+import org.tiqian.markdown.MarkdownBibliographyBlock
 import org.tiqian.markdown.MarkdownBlock
 import org.tiqian.markdown.MarkdownBlockQuote
+import org.tiqian.markdown.MarkdownContainerBlock
+import org.tiqian.markdown.MarkdownDiagramBlock
 import org.tiqian.markdown.MarkdownHeading
 import org.tiqian.markdown.MarkdownImageBlock
+import org.tiqian.markdown.MarkdownPageBreakBlock
 import org.tiqian.markdown.MarkdownParagraph
 import org.tiqian.markdown.MarkdownTable
 import org.tiqian.markdown.MarkdownTableAlignment
@@ -11,6 +15,7 @@ import org.tiqian.markdown.MarkdownText
 import org.tiqian.markdown.MarkdownTextMark
 import org.tiqian.markdown.MarkdownTextRange
 import org.tiqian.markdown.MarkdownTextSpan
+import org.tiqian.markdown.MarkdownTocBlock
 
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.text.TextStyle
@@ -22,7 +27,7 @@ import org.tiqian.compose.measureWithInlineContent
 import org.tiqian.core.LayoutConstraints
 import org.tiqian.core.LayoutResult
 import org.tiqian.core.ParagraphStyle
-import org.tiqian.core.ic
+import org.tiqian.core.Ic
 
 internal data class MarkdownPrecomputedLayout(
     val layout: LayoutResult,
@@ -134,6 +139,13 @@ private fun MarkdownBlock.supportsBackgroundPrelayout(defaultMath: Boolean): Boo
     // subtree — column negotiation and every cell layout — is precomputed as one unit.
     is MarkdownTable -> rows.isNotEmpty() &&
         rows.all { row -> row.cells.all { !it.text.hasPrelayoutBlockedSpans(defaultMath) } }
+    // These blocks own presentation widths or derived content not modelled by this worker.
+    is MarkdownContainerBlock,
+    is MarkdownBibliographyBlock,
+    is MarkdownDiagramBlock,
+    is MarkdownTocBlock,
+    is MarkdownPageBreakBlock,
+    -> false
     else -> false
 }
 
@@ -346,7 +358,7 @@ private fun precomputeMarkdownBlock(
     return precomputeMarkdownTextLayout(
         text = text,
         textStyle = textStyle,
-        paragraphStyle = ParagraphStyle(firstLineIndent = 0.ic),
+        paragraphStyle = ParagraphStyle(firstLineIndent = Ic.Zero),
         style = style,
         inlineSlots = inlineSlots,
         mathRuntime = mathRuntime,

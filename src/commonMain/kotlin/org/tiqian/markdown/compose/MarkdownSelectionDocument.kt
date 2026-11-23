@@ -2,10 +2,12 @@ package org.tiqian.markdown.compose
 
 import androidx.compose.ui.text.AnnotatedString
 import org.tiqian.compose.CjkSelectionDocumentFragment
+import org.tiqian.markdown.MarkdownBibliographyBlock
 import org.tiqian.markdown.MarkdownBlock
-import org.tiqian.markdown.MarkdownBlockQuote
 import org.tiqian.markdown.MarkdownCodeBlock
+import org.tiqian.markdown.MarkdownContainerBlock
 import org.tiqian.markdown.MarkdownCustomBlock
+import org.tiqian.markdown.MarkdownDiagramBlock
 import org.tiqian.markdown.MarkdownFootnoteDefinition
 import org.tiqian.markdown.MarkdownHeading
 import org.tiqian.markdown.MarkdownHtmlBlock
@@ -18,8 +20,19 @@ import org.tiqian.markdown.MarkdownTable
 import org.tiqian.markdown.MarkdownTaskState
 import org.tiqian.markdown.MarkdownText
 import org.tiqian.markdown.MarkdownUnsupportedBlock
+import org.tiqian.markdown.childBlocks
 
-internal data class MarkdownSelectionKey(
+/**
+ * Identity of a built-in Markdown selection fragment. An opaque selection fragment key can be
+ * checked with `as? MarkdownSelectionKey` and [node] matched to the corresponding node's
+ * `metadata.key` in the same document. The node may be nested (for example, a list paragraph or
+ * table cell), rather than a top-level block.
+ *
+ * [role] distinguishes fragment purposes: `text` for paragraphs and headings, `marker` for list
+ * and footnote markers, `cell` for table cells, and `caption` for captions. Other roles are possible.
+ * This key identifies a fragment; selection range offsets must be retained separately.
+ */
+data class MarkdownSelectionKey(
     val node: MarkdownNodeKey,
     val role: String = "text",
 )
@@ -27,43 +40,82 @@ internal data class MarkdownSelectionKey(
 internal fun markdownSelectionKey(node: MarkdownNodeKey, role: String = "text"): MarkdownSelectionKey =
     MarkdownSelectionKey(node, role)
 
-/** Exact reading-order projection of the prose surfaces rendered with CjkText. */
-internal fun List<MarkdownBlock>.markdownSelectionFragments(): List<CjkSelectionDocumentFragment> = buildList {
-    fun addText(node: MarkdownNodeKey, text: MarkdownText, role: String = "text", separator: String = "\n") {
-        add(
-            CjkSelectionDocumentFragment(
-                key = markdownSelectionKey(node, role),
-                text = AnnotatedString(text.value),
-                separatorAfter = separator,
-            ),
+/**
+ * Logical reading-order projection shared by selection and optional text search.
+ * Copying includes uncomposed blocks and inactive tabs.
+ * [onSearchableText] receives only built-in MarkdownTextBlock surfaces, with their top-level
+ * deferred owner. Slots affect search eligibility, never the existing selection/copy projection.
+ */
+internal fun List<MarkdownBlock>.markdownSelectionFragments(
+    slots: MarkdownBlockSlots = DefaultMarkdownBlockSlots,
+    onSearchableText: ((CjkSelectionDocumentFragment, MarkdownText, MarkdownNodeKey) -> Unit)? = null,
+): List<CjkSelectionDocumentFragment> = buildList {
+    fun addText(
+        node: MarkdownNodeKey,
+        text: MarkdownText,
+        owner: MarkdownNodeKey,
+        searchable: Boolean,
+        role: String = "text",
+        separator: String = "\n",
+    ) {
+        val fragment = CjkSelectionDocumentFragment(
+            key = markdownSelectionKey(node, role),
+            text = AnnotatedString(text.value),
+            separatorAfter = separator,
         )
+        add(fragment)
+        if (searchable) onSearchableText?.invoke(fragment, text, owner)
     }
 
-    fun addBlocks(blocks: List<MarkdownBlock>) {
+    fun addBlocks(blocks: List<MarkdownBlock>, owner: MarkdownNodeKey? = null, searchable: Boolean = true) {
         blocks.forEach { block ->
+            val retentionOwner = owner ?: block.metadata.key
+            val canSearch = searchable && when (block) {
+                is MarkdownContainerBlock -> slots.container == null
+                is MarkdownBibliographyBlock -> slots.bibliography == null
+                is MarkdownFootnoteDefinition -> slots.footnoteDefinition == null
+                is MarkdownImageBlock -> slots.imageBlock == null
+                is MarkdownTable -> slots.table == null
+                else -> true
+            }
             when (block) {
-                is MarkdownParagraph -> addText(block.metadata.key, block.text)
-                is MarkdownHeading -> addText(block.metadata.key, block.text)
-                is MarkdownBlockQuote -> addBlocks(block.blocks)
-                is MarkdownList -> block.items.forEachIndexed { index, item ->
-                    val marker = when (item.task) {
-                        MarkdownTaskState.Checked -> "[x]"
-                        MarkdownTaskState.Unchecked -> "[ ]"
-                        null -> if (block.ordered) "${block.startNumber + index}." else "•"
+                is MarkdownParagraph -> addText(block.metadata.key, block.text, retentionOwner, canSearch)
+                is MarkdownHeading -> addText(block.metadata.key, block.text, retentionOwner, canSearch)
+                is MarkdownContainerBlock -> block.title?.let { title ->
+                    addText(block.metadata.key, title, retentionOwner, canSearch, role = "title")
+                }
+                is MarkdownBibliographyBlock -> {
+                    addText(block.metadata.key, MarkdownText(block.title), retentionOwner, canSearch, role = "title")
+                    block.entries.forEach { entry -> addText(entry.metadata.key, entry.text, retentionOwner, canSearch) }
+                }
+                is MarkdownList -> {
+                    block.items.forEachIndexed { index, item ->
+                        val marker = when (item.task) {
+                            MarkdownTaskState.Checked -> "[x]"
+                            MarkdownTaskState.Unchecked -> "[ ]"
+                            null -> if (block.ordered) "${block.startNumber + index}." else "•"
+                        }
+                        add(
+                            CjkSelectionDocumentFragment(
+                                key = markdownSelectionKey(item.metadata.key, "marker"),
+                                text = AnnotatedString(marker),
+                                separatorAfter = " ",
+                            ),
+                        )
+                        addBlocks(item.blocks, retentionOwner, canSearch)
                     }
-                    add(
-                        CjkSelectionDocumentFragment(
-                            key = markdownSelectionKey(item.metadata.key, "marker"),
-                            text = AnnotatedString(marker),
-                            separatorAfter = " ",
-                        ),
-                    )
-                    addBlocks(item.blocks)
+                    return@forEach
                 }
                 is MarkdownCodeBlock -> add(
                     CjkSelectionDocumentFragment(
                         markdownSelectionKey(block.metadata.key, "code"),
                         AnnotatedString(block.code),
+                    ),
+                )
+                is MarkdownDiagramBlock -> add(
+                    CjkSelectionDocumentFragment(
+                        markdownSelectionKey(block.metadata.key, "code"),
+                        AnnotatedString(block.source),
                     ),
                 )
                 is MarkdownImageBlock -> {
@@ -76,7 +128,12 @@ internal fun List<MarkdownBlock>.markdownSelectionFragments(): List<CjkSelection
                             ),
                         )
                     }
-                    block.caption?.let { caption -> addText(block.metadata.key, caption, role = "caption") }
+                    block.caption?.let { caption ->
+                        addText(
+                            block.metadata.key, caption, retentionOwner,
+                            canSearch, role = "caption",
+                        )
+                    }
                 }
                 is MarkdownMathBlock -> add(
                     CjkSelectionDocumentFragment(
@@ -91,12 +148,19 @@ internal fun List<MarkdownBlock>.markdownSelectionFragments(): List<CjkSelection
                     ),
                 )
                 is MarkdownTable -> {
-                    block.caption?.let { caption -> addText(block.metadata.key, caption, role = "caption") }
+                    block.caption?.let { caption ->
+                        addText(
+                            block.metadata.key, caption, retentionOwner,
+                            canSearch, role = "caption",
+                        )
+                    }
                     block.rows.forEach { row ->
                         row.cells.forEachIndexed { index, cell ->
                             addText(
                                 node = cell.metadata.key,
                                 text = cell.text,
+                                owner = retentionOwner,
+                                searchable = canSearch,
                                 role = "cell",
                                 separator = if (index == row.cells.lastIndex) "\n" else "\t",
                             )
@@ -111,7 +175,6 @@ internal fun List<MarkdownBlock>.markdownSelectionFragments(): List<CjkSelection
                             separatorAfter = " ",
                         ),
                     )
-                    addBlocks(block.blocks)
                 }
                 is MarkdownCustomBlock -> block.attributes["text"]?.takeIf(String::isNotEmpty)?.let { text ->
                     add(
@@ -131,6 +194,7 @@ internal fun List<MarkdownBlock>.markdownSelectionFragments(): List<CjkSelection
                 }
                 else -> Unit
             }
+            addBlocks(block.childBlocks(), retentionOwner, canSearch)
         }
     }
 
