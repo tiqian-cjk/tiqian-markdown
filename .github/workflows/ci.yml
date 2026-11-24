@@ -14,14 +14,19 @@ on:
       - "docs/**"
       - "LICENSE"
   workflow_dispatch:
+    inputs:
+      tiqian_version:
+        description: Tiqian release to build against; empty takes the newest on the registry
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
 env:
-  # The Tiqian release this workflow builds against, resolved from
-  # registry.tiqian.org. Raise it after each Tiqian release.
-  TIQIAN_RELEASE: 0.1.0-alpha.13
+  # settings.gradle.kts and scripts/verify-maven-local.sh both read this variable.
+  TIQIAN_REGISTRY_REPOSITORY: https://registry.tiqian.org/maven/
 
 jobs:
   build:
@@ -58,8 +63,30 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
 
+      - name: Resolve the Tiqian release
+        # Every run builds against the newest Tiqian release on the registry, so
+        # a Tiqian release that breaks Tiqian Markdown fails the next run. The
+        # registry lists a version in maven-metadata.xml once that release has
+        # written all its modules. A manual run may name another release.
+        env:
+          REQUESTED_VERSION: ${{ inputs.tiqian_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$REQUESTED_VERSION"
+          if [[ -z "$version" ]]; then
+            metadata="${TIQIAN_REGISTRY_REPOSITORY%/}/org/tiqian/tiqian-compose-material3/maven-metadata.xml"
+            version="$(curl -fsSL --retry 3 "$metadata" | python3 -c \
+              'import sys, xml.etree.ElementTree as ET; print(ET.parse(sys.stdin).getroot().findtext("versioning/release") or "")')"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::no usable Tiqian release version: '$version'"
+            exit 1
+          fi
+          echo "::notice::Building against Tiqian $version"
+          echo "TIQIAN_REGISTRY_VERSION=$version" >> "$GITHUB_ENV"
+
       - name: Test through isolated Maven repository
         env:
           TIQIAN_MATH_CHECKOUT: tiqian-math
-          TIQIAN_REGISTRY_VERSION: ${{ env.TIQIAN_RELEASE }}
         run: ./scripts/verify-maven-local.sh
