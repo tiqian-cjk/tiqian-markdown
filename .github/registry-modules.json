@@ -1,0 +1,13 @@
+{
+  "description": "The Tiqian Markdown modules that registry.tiqian.org describes: markdown-compose, the one module build.gradle.kts publishes. The release workflow passes this file to tools/write-maven-registry-tree.py of tiqian-cjk/tiqian, which reads the Gradle unit of a release manifest, so the file keeps that shape.",
+  "units": [
+    {
+      "packageSource": {
+        "kind": "gradle"
+      },
+      "packages": [
+        "markdown-compose"
+      ]
+    }
+  ]
+}

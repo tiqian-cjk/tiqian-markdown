@@ -6,11 +6,17 @@ import zipfile
 
 
 arguments = sys.argv[1:]
-# With --tiqian-from-registry the Tiqian modules were resolved from the registry
-# instead of being published into the repository, so only Tiqian Math and Tiqian
-# Markdown are expected there.
-tiqian_from_registry = "--tiqian-from-registry" in arguments
-arguments = [argument for argument in arguments if argument != "--tiqian-from-registry"]
+# With --tiqian-from-registry the Tiqian modules, and with --math-from-registry the
+# Tiqian Math modules, were resolved from the registry instead of being published
+# into the repository, so they are not expected there. The lockstep check still
+# reads every POM the repository holds, including the Tiqian Markdown ones.
+options = {argument for argument in arguments if argument.startswith("--")}
+unknown = options - {"--tiqian-from-registry", "--math-from-registry"}
+if unknown:
+    raise SystemExit(f"unknown option: {', '.join(sorted(unknown))}")
+tiqian_from_registry = "--tiqian-from-registry" in options
+math_from_registry = "--math-from-registry" in options
+arguments = [argument for argument in arguments if not argument.startswith("--")]
 repository = Path(arguments[0])
 version = arguments[1]
 namespace = {"m": "http://maven.apache.org/POM/4.0.0"}
@@ -24,9 +30,7 @@ tiqian_modules = {
     ("org.tiqian", "tiqian-compose"),
     ("org.tiqian", "tiqian-compose-material3"),
 }
-expected = set() if tiqian_from_registry else set(tiqian_modules)
-expected |= {
-    ("org.tiqian", "markdown-compose"),
+math_modules = {
     ("org.tiqian", "math-engine"),
     ("org.tiqian", "math-font-stix"),
     ("org.tiqian", "math-font-tooling"),
@@ -35,6 +39,11 @@ expected |= {
     ("org.tiqian", "math-jvm-skia"),
     ("org.tiqian", "math-compose"),
 }
+expected = {("org.tiqian", "markdown-compose")}
+if not tiqian_from_registry:
+    expected |= tiqian_modules
+if not math_from_registry:
+    expected |= math_modules
 
 errors: list[str] = []
 for group, artifact in sorted(expected):

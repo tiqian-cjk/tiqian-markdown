@@ -1,21 +1,19 @@
 name: Stage Tiqian Markdown Maven release
 
+# Tiqian Markdown is released after Tiqian and Tiqian Math, at the same version:
+# the stage job resolves both from registry.tiqian.org at that version, checks
+# the modules it builds against them and uploads those modules to Central
+# staging. The registry job then describes the same module files on the
+# registry: it uploads them to the GitHub release of v<version>, creating that
+# release if it is missing, commits their metadata to tiqian-cjk/registry and
+# deploys the registry site. A failed registry job is retried with "Re-run
+# failed jobs", which reuses the module files the stage job kept.
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Lockstep version for all three repositories
+        description: Lockstep version; Tiqian and Tiqian Math must already be on the registry at it
         required: true
-        type: string
-      tiqian_ref:
-        description: Tiqian git ref
-        required: true
-        default: main
-        type: string
-      tiqian_math_ref:
-        description: Tiqian Math git ref
-        required: true
-        default: main
         type: string
       namespace:
         description: Central Portal namespace
@@ -29,6 +27,15 @@ permissions:
 concurrency:
   group: stage-tiqian-markdown-maven-${{ inputs.version }}
   cancel-in-progress: false
+
+env:
+  # settings.gradle.kts reads this variable too, so every Gradle run of this
+  # workflow resolves Tiqian and Tiqian Math from the registry.
+  TIQIAN_REGISTRY_REPOSITORY: https://registry.tiqian.org/maven/
+  # The tiqian-cjk/tiqian commit (v0.1.0-alpha.15) whose tools/ write, check and
+  # merge the registry tree, the same scripts Tiqian's release runs. Move it when
+  # those scripts change the tree format.
+  TIQIAN_TOOLS_REF: dd504925da57e1326cf02e064543b4c8afed7626
 
 jobs:
   stage:
@@ -46,32 +53,33 @@ jobs:
 
       - name: Validate release inputs
         shell: bash
+        # The registry job needs REGISTRY_REPO_TOKEN; checking it here keeps a
+        # run without it from staging on Central first.
+        env:
+          REGISTRY_REPO_TOKEN: ${{ secrets.REGISTRY_REPO_TOKEN }}
         run: |
           set -euo pipefail
           if [[ "$TIQIAN_VERSION" == *-SNAPSHOT ]]; then
             echo "Central staging requires an immutable non-SNAPSHOT version." >&2
             exit 1
           fi
-          for variable in MAVEN_CENTRAL_USERNAME MAVEN_CENTRAL_PASSWORD SIGNING_KEY; do
+          if [[ ! "$TIQIAN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "$TIQIAN_VERSION is not a version the registry and the v<version> tag accept." >&2
+            exit 1
+          fi
+          for variable in MAVEN_CENTRAL_USERNAME MAVEN_CENTRAL_PASSWORD SIGNING_KEY REGISTRY_REPO_TOKEN; do
             if [[ -z "${!variable:-}" ]]; then
               echo "Required release secret $variable is missing." >&2
               exit 1
             fi
           done
-
-      - name: Check out Tiqian
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          repository: tiqian-cjk/tiqian
-          ref: ${{ inputs.tiqian_ref }}
-          path: Tiqian
-
-      - name: Check out Tiqian Math
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          repository: tiqian-cjk/tiqian-math
-          ref: ${{ inputs.tiqian_math_ref }}
-          path: tiqian-math
+          for module in tiqian-compose-material3 math-compose; do
+            pom="${TIQIAN_REGISTRY_REPOSITORY%/}/org/tiqian/$module/$TIQIAN_VERSION/$module-$TIQIAN_VERSION.pom"
+            if ! curl -fsSL -o /dev/null "$pom"; then
+              echo "The registry has no $module $TIQIAN_VERSION; release Tiqian and Tiqian Math at this version first." >&2
+              exit 1
+            fi
+          done
 
       - name: Set up JDK 25
         uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
@@ -95,29 +103,37 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
 
-      # Tiqian's :shaping:native-font pins CMake 4.3.2, which the Android SDK does not
-      # bundle; publishing Tiqian builds it. Prepend the pinned build so this workflow
-      # uses the same native toolchain as CI.
-      - name: Install CMake 4.3.2 for Tiqian native-font
-        run: |
-          python3 -m venv "$HOME/cmake-venv"
-          "$HOME/cmake-venv/bin/pip" install --quiet "cmake==4.3.2"
-          cmake_bin_dir="$("$HOME/cmake-venv/bin/python" -c 'import cmake, os; print(os.path.join(os.path.dirname(cmake.__file__), "data", "bin"))')"
-          echo "$cmake_bin_dir" >> "$GITHUB_PATH"
-          "$cmake_bin_dir/cmake" --version
-
       - name: Verify lockstep Maven consumption
+        # Nothing upstream is built: the tests, the published metadata and the
+        # smoke test all run against the released Tiqian and Tiqian Math.
         env:
-          TIQIAN_CHECKOUT: Tiqian
-          TIQIAN_MATH_CHECKOUT: tiqian-math
+          TIQIAN_REGISTRY_VERSION: ${{ inputs.version }}
+          TIQIAN_MATH_FROM_REGISTRY: "true"
         run: ./scripts/verify-maven-local.sh
+
+      - name: Check out the Tiqian registry tools
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: tiqian-cjk/tiqian
+          ref: ${{ env.TIQIAN_TOOLS_REF }}
+          path: tiqian-tools
+          sparse-checkout: tools
+          persist-credentials: false
+
+      - name: Collect the module files for the registry
+        # The verification published only the Tiqian Markdown modules into this
+        # repository; any other org.tiqian module there fails the step.
+        run: |
+          python3 tiqian-tools/tools/write-maven-registry-tree.py collect \
+            --maven-local build/maven-local-smoke/repository \
+            --version "$TIQIAN_VERSION" \
+            --out "$RUNNER_TEMP/maven-publication" \
+            --expect-manifest .github/registry-modules.json
 
       - name: Upload Tiqian Markdown modules
         run: |
           ./gradlew publishAllPublicationsToCentralRepository \
             -PtiqianDependencyVersion="$TIQIAN_VERSION" \
-            -PtiqianRepository="$PWD/build/maven-local-smoke/repository" \
-            -Dmaven.repo.local="$PWD/build/maven-local-smoke/repository" \
             --no-daemon
 
       - name: Create Central Portal deployment
@@ -129,3 +145,151 @@ jobs:
             --request POST \
             --header "Authorization: Bearer $authorization" \
             "https://ossrh-staging-api.central.sonatype.com/manual/upload/defaultRepository/$CENTRAL_NAMESPACE?publishing_type=user_managed"
+
+      - name: Keep the module files for the registry
+        # Kept only after the Central deployment exists, so the registry never
+        # describes a build that Central staging did not receive.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: maven-gradle-publication
+          path: ${{ runner.temp }}/maven-publication
+          if-no-files-found: error
+
+  registry:
+    needs: [stage]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TIQIAN_VERSION: ${{ inputs.version }}
+      RELEASE_TAG: v${{ inputs.version }}
+    steps:
+      - name: Check out Tiqian Markdown
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Check out the Tiqian registry tools
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: tiqian-cjk/tiqian
+          ref: ${{ env.TIQIAN_TOOLS_REF }}
+          path: tiqian-tools
+          sparse-checkout: tools
+          persist-credentials: false
+
+      - name: Download the module files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: maven-gradle-publication
+          path: maven-publication
+
+      - name: Describe the modules in the registry tree
+        # One package directory per module, listing its root coordinate and its
+        # target coordinates. The files move to one flat directory under the
+        # release asset names the metadata points at.
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tiqian-tools/tools/write-maven-registry-tree.py write \
+            --publication maven-publication \
+            --assets maven-assets \
+            --tree "$RUNNER_TEMP/maven-registry-tree" \
+            --owner "${{ github.repository_owner }}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --version "$TIQIAN_VERSION" \
+            --expect-manifest .github/registry-modules.json
+          python3 tiqian-tools/tools/check-registry-tree.py --tree "$RUNNER_TEMP/maven-registry-tree" --artifacts maven-assets
+
+      - name: Create the GitHub release
+        # The metadata points at assets of the v<version> release. An existing
+        # release keeps its notes, but its tag must name the commit this run
+        # built; a missing release is created as a pre-release for a version
+        # with a pre-release suffix, with generated notes to edit afterwards.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # An annotated tag lists its commit under the peeled ref ^{}; a
+          # lightweight tag names the commit itself. A missing tag lists nothing.
+          refs="$(git ls-remote origin "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}")"
+          tag_commit="$(awk -v tag="refs/tags/$RELEASE_TAG" \
+            '$2 == tag "^{}" { peeled = $1 } $2 == tag { plain = $1 } END { print (peeled != "" ? peeled : plain) }' <<< "$refs")"
+          if [[ -n "$tag_commit" && "$tag_commit" != "$GITHUB_SHA" ]]; then
+            echo "::error::$RELEASE_TAG names $tag_commit, but this run built $GITHUB_SHA"
+            exit 1
+          fi
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "$RELEASE_TAG already has a release"
+          else
+            flags=()
+            if [[ "$TIQIAN_VERSION" == *-* ]]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "$RELEASE_TAG" --generate-notes "${flags[@]}"
+          fi
+
+      - name: Upload the module files to the release
+        # An asset with the same bytes stays in place on a re-run; different
+        # bytes stop the step.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=()
+          for file in maven-assets/*; do
+            [[ "$(basename "$file")" == SHA256SUMS ]] && continue
+            files+=("$file")
+          done
+          bash tiqian-tools/tools/upload-release-assets.sh "$RELEASE_TAG" "${files[@]}"
+
+      - name: Commit the metadata to the registry repository
+        # Earlier versions in the registry stay in place, and a re-run writes
+        # the same bytes, so its commit is empty and skipped.
+        env:
+          REGISTRY_REPO_TOKEN: ${{ secrets.REGISTRY_REPO_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          registry="$RUNNER_TEMP/registry"
+          git clone "https://x-access-token:${REGISTRY_REPO_TOKEN}@github.com/tiqian-cjk/registry.git" "$registry"
+          python3 tiqian-tools/tools/merge-registry-tree.py \
+            --tree "$RUNNER_TEMP/maven-registry-tree" \
+            --owner "${{ github.repository_owner }}" \
+            --registry "$registry"
+          cd "$registry"
+          git config user.name "Release Bot"
+          git config user.email "release@tiqian.dev"
+          git add .
+          if git diff --cached --quiet; then
+            echo "registry metadata for $TIQIAN_VERSION is already current"
+            exit 0
+          fi
+          git commit -m "release: $GITHUB_REPOSITORY $RELEASE_TAG"
+          # Other releases push to the same repository. They write other package
+          # directories, so a push that lost the race rebases and tries again.
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            if [[ "$attempt" != 3 ]]; then
+              git pull --rebase origin main
+            fi
+          done
+          echo "::error::the registry repository refused the push three times"
+          exit 1
+
+      - name: Deploy the registry site
+        # The Pages Git integration does not deploy every push to the registry
+        # repository, so the deploy hook starts the production build.
+        env:
+          PAGES_DEPLOY_HOOK: ${{ secrets.PAGES_DEPLOY_HOOK }}
+        run: |
+          if [[ -z "$PAGES_DEPLOY_HOOK" ]]; then
+            echo "PAGES_DEPLOY_HOOK is not configured; skipping the deployment"
+            exit 0
+          fi
+          curl -fsS -X POST "$PAGES_DEPLOY_HOOK" | head -c 200
