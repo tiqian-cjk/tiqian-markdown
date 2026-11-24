@@ -13,9 +13,21 @@ on:
       - "**/*.md"
       - "docs/**"
       - "LICENSE"
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+env:
+  # Pull requests and pushes build against this Tiqian release, resolved from
+  # registry.tiqian.org. Raise it after each Tiqian release.
+  TIQIAN_RELEASE: 0.1.0-alpha.13
+  # The weekly run (Monday 03:00 UTC) and manual runs build Tiqian main from
+  # source instead, so a change on Tiqian main that breaks Markdown shows up
+  # before Tiqian releases it.
+  FROM_TIQIAN_MAIN: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
 jobs:
   build:
@@ -25,6 +37,7 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Check out Tiqian
+        if: env.FROM_TIQIAN_MAIN == 'true'
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: tiqian-cjk/tiqian
@@ -63,6 +76,7 @@ jobs:
       # cmake at /usr/local/bin, so prepend the pinned build to PATH (via GITHUB_PATH) so
       # AGP resolves 4.3.2, mirroring the local homebrew install.
       - name: Install CMake 4.3.2 for Tiqian native-font
+        if: env.FROM_TIQIAN_MAIN == 'true'
         run: |
           python3 -m venv "$HOME/cmake-venv"
           "$HOME/cmake-venv/bin/pip" install --quiet "cmake==4.3.2"
@@ -74,4 +88,5 @@ jobs:
         env:
           TIQIAN_CHECKOUT: Tiqian
           TIQIAN_MATH_CHECKOUT: tiqian-math
+          TIQIAN_REGISTRY_VERSION: ${{ env.FROM_TIQIAN_MAIN != 'true' && env.TIQIAN_RELEASE || '' }}
         run: ./scripts/verify-maven-local.sh

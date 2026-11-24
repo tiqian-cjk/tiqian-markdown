@@ -5,11 +5,17 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 
-repository = Path(sys.argv[1])
-version = sys.argv[2]
+arguments = sys.argv[1:]
+# With --tiqian-from-registry the Tiqian modules were resolved from the registry
+# instead of being published into the repository, so only Tiqian Math and Tiqian
+# Markdown are expected there.
+tiqian_from_registry = "--tiqian-from-registry" in arguments
+arguments = [argument for argument in arguments if argument != "--tiqian-from-registry"]
+repository = Path(arguments[0])
+version = arguments[1]
 namespace = {"m": "http://maven.apache.org/POM/4.0.0"}
 
-expected = {
+tiqian_modules = {
     ("org.tiqian", "tiqian-engine"),
     ("org.tiqian", "tiqian-jvm-shaping"),
     ("org.tiqian", "tiqian-jvm-skia"),
@@ -17,6 +23,9 @@ expected = {
     ("org.tiqian", "tiqian-android-native-font"),
     ("org.tiqian", "tiqian-compose"),
     ("org.tiqian", "tiqian-compose-material3"),
+}
+expected = set() if tiqian_from_registry else set(tiqian_modules)
+expected |= {
     ("org.tiqian", "markdown-compose"),
     ("org.tiqian", "math-engine"),
     ("org.tiqian", "math-font-stix"),

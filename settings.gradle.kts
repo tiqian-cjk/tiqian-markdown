@@ -11,6 +11,12 @@ pluginManagement {
 val tiqianRepository = providers.gradleProperty("tiqianRepository")
     .orElse(providers.environmentVariable("TIQIAN_REPOSITORY"))
     .orNull
+// A Maven repository that serves released org.tiqian modules, such as
+// https://registry.tiqian.org/maven/. It is searched after tiqianRepository, so
+// modules built locally take precedence over released ones.
+val tiqianRegistryRepository = providers.gradleProperty("tiqianRegistryRepository")
+    .orElse(providers.environmentVariable("TIQIAN_REGISTRY_REPOSITORY"))
+    .orNull
 val tiqianLocalConfig = rootDir.resolve(".tiqian-local.properties")
 val tiqianLocalVersion = tiqianLocalConfig.takeIf { it.isFile }
     ?.inputStream()
@@ -34,6 +40,15 @@ dependencyResolutionManagement {
             maven {
                 name = "tiqianIntegration"
                 url = uri(tiqianRepository)
+                content {
+                    includeGroup("org.tiqian")
+                }
+            }
+        }
+        if (tiqianRegistryRepository != null) {
+            maven {
+                name = "tiqianRegistry"
+                url = uri(tiqianRegistryRepository)
                 content {
                     includeGroup("org.tiqian")
                 }
