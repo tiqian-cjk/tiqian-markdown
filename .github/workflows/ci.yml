@@ -13,21 +13,15 @@ on:
       - "**/*.md"
       - "docs/**"
       - "LICENSE"
-  schedule:
-    - cron: "0 3 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
-  # Pull requests and pushes build against this Tiqian release, resolved from
+  # The Tiqian release this workflow builds against, resolved from
   # registry.tiqian.org. Raise it after each Tiqian release.
   TIQIAN_RELEASE: 0.1.0-alpha.13
-  # The weekly run (Monday 03:00 UTC) and manual runs build Tiqian main from
-  # source instead, so a change on Tiqian main that breaks Markdown shows up
-  # before Tiqian releases it.
-  FROM_TIQIAN_MAIN: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
 jobs:
   build:
@@ -35,13 +29,6 @@ jobs:
     steps:
       - name: Check out Tiqian Markdown
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Check out Tiqian
-        if: env.FROM_TIQIAN_MAIN == 'true'
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          repository: tiqian-cjk/tiqian
-          path: Tiqian
 
       - name: Check out Tiqian Math
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -71,22 +58,8 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
 
-      # Tiqian's :shaping:native-font pins CMake 4.3.2, which the Android SDK does not
-      # bundle; publishing Tiqian to Maven Local builds it. The runner ships a different
-      # cmake at /usr/local/bin, so prepend the pinned build to PATH (via GITHUB_PATH) so
-      # AGP resolves 4.3.2, mirroring the local homebrew install.
-      - name: Install CMake 4.3.2 for Tiqian native-font
-        if: env.FROM_TIQIAN_MAIN == 'true'
-        run: |
-          python3 -m venv "$HOME/cmake-venv"
-          "$HOME/cmake-venv/bin/pip" install --quiet "cmake==4.3.2"
-          cmake_bin_dir="$("$HOME/cmake-venv/bin/python" -c 'import cmake, os; print(os.path.join(os.path.dirname(cmake.__file__), "data", "bin"))')"
-          echo "$cmake_bin_dir" >> "$GITHUB_PATH"
-          "$cmake_bin_dir/cmake" --version
-
       - name: Test through isolated Maven repository
         env:
-          TIQIAN_CHECKOUT: Tiqian
           TIQIAN_MATH_CHECKOUT: tiqian-math
-          TIQIAN_REGISTRY_VERSION: ${{ env.FROM_TIQIAN_MAIN != 'true' && env.TIQIAN_RELEASE || '' }}
+          TIQIAN_REGISTRY_VERSION: ${{ env.TIQIAN_RELEASE }}
         run: ./scripts/verify-maven-local.sh
