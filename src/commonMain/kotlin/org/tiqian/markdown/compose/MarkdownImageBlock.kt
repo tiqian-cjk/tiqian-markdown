@@ -98,7 +98,6 @@ import org.tiqian.core.LastLineAlignment
 import org.tiqian.core.LineLengthGrid
 import org.tiqian.core.ParagraphStyle
 import org.tiqian.core.TextStyle as CoreTextStyle
-import org.tiqian.core.ic
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 import org.tiqian.markdown.compose.generated.resources.Res

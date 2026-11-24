@@ -99,7 +99,7 @@ import org.tiqian.core.LastLineAlignment
 import org.tiqian.core.LineLengthGrid
 import org.tiqian.core.ParagraphStyle
 import org.tiqian.core.TextStyle as CoreTextStyle
-import org.tiqian.core.ic
+import org.tiqian.core.Ic
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 import org.tiqian.markdown.compose.generated.resources.Res
@@ -120,7 +120,7 @@ import kotlin.math.roundToInt
 // recorded rationale. Width negotiation keeps columns on the em grid so the quantized
 // measure never leaves per-line slack.
 internal val markdownTableParagraphStyle = ParagraphStyle(
-    firstLineIndent = 0.ic,
+    firstLineIndent = Ic.Zero,
     lastLineAlignment = LastLineAlignment.Start,
 )
 
